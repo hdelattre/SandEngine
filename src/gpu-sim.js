@@ -149,6 +149,8 @@ export class GpuSim {
         center: mustGetUniform(gl, program, "u_center"),
         radius: mustGetUniform(gl, program, "u_radius"),
         paint: mustGetUniform(gl, program, "u_paint"),
+        seed: mustGetUniform(gl, program, "u_seed"),
+        tick: mustGetUniform(gl, program, "u_tick"),
       },
     };
   }
@@ -391,6 +393,8 @@ export class GpuSim {
     gl.uniform2i(u.center, x | 0, y | 0);
     gl.uniform1i(u.radius, radius | 0);
     gl.uniform4ui(u.paint, cell.id >>> 0, clampByte(cell.temp) >>> 0, clampByte(cell.data) >>> 0, clampByte(cell.flags) >>> 0);
+    gl.uniform1ui(u.seed, this.seed >>> 0);
+    gl.uniform1ui(u.tick, this.tick >>> 0);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this._srcTex());

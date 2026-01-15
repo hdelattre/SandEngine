@@ -236,7 +236,9 @@ export function defaultCellForParticle(id) {
     case Particle.OIL:
       return { temp: DEFAULT_AMBIENT_TEMP, data: 0, flags: 0 };
     case Particle.PLANT:
-      return { temp: DEFAULT_AMBIENT_TEMP, data: 0, flags: 0 };
+      // `flags` is per-cell metadata in state.a; for Plant it encodes growth params:
+      // bits 0..2 dir, 3..5 gene, 6..7 cooldown. Default gene=4, dir=up.
+      return { temp: DEFAULT_AMBIENT_TEMP, data: 120, flags: 32 };
     default:
       return { temp: DEFAULT_AMBIENT_TEMP, data: 0, flags: 0 };
   }

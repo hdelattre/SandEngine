@@ -197,6 +197,26 @@ bool isFluid(uint flags) {
   return (flags & (FLAG_LIQUID | FLAG_GAS | FLAG_ENERGY)) != 0u;
 }
 
+int dirIndexFromDelta(ivec2 d) {
+  if (d.x == 0 && d.y == 1) return 0;
+  if (d.x == 1 && d.y == 1) return 1;
+  if (d.x == 1 && d.y == 0) return 2;
+  if (d.x == 1 && d.y == -1) return 3;
+  if (d.x == 0 && d.y == -1) return 4;
+  if (d.x == -1 && d.y == -1) return 5;
+  if (d.x == -1 && d.y == 0) return 6;
+  return 7;
+}
+
+int cycDiff8(int a, int b) {
+  int d = abs(a - b);
+  return d > 4 ? 8 - d : d;
+}
+
+uint packPlantMeta(uint dir, uint gene, uint cd) {
+  return (dir & 7u) | ((gene & 7u) << 3u) | ((cd & 3u) << 6u);
+}
+
 uint columnMass2(ivec2 c) {
   uint m = 0u;
   for (int i = 1; i <= 2; i++) {
@@ -213,6 +233,72 @@ uint columnMass2(ivec2 c) {
   return m;
 }
 
+void tryPlantGrow(
+  ivec2 plantC,
+  ivec2 delta,
+  inout uint plantId,
+  inout uint plantTemp,
+  inout uint plantData,
+  inout uint plantMeta,
+  inout uint tgtId,
+  inout uint tgtTemp,
+  inout uint tgtData,
+  inout uint tgtMeta,
+  uint salt
+) {
+  if (plantId != P_PLANT || tgtId != P_EMPTY) return;
+
+  uint dir = plantMeta & 7u;
+  uint gene = (plantMeta >> 3u) & 7u;
+  uint cd = (plantMeta >> 6u) & 3u;
+
+  if (cd != 0u) return;
+  if (plantData < 170u) return;
+  if (plantTemp > 220u) return;
+  if (tgtTemp > 220u) return;
+
+  int dIdx = dirIndexFromDelta(delta);
+  int diff = cycDiff8(dIdx, int(dir));
+
+  uint chance = 4u + gene * 2u;
+  if (diff == 0) chance += 28u;
+  else if (diff == 1) chance += 18u;
+  else if (diff == 2) chance += 8u;
+  else if (diff == 3) chance += gene;
+
+  // Bias upward, but allow some sideways branching.
+  if (dIdx == 0 || dIdx == 1 || dIdx == 7) chance += 10u;
+  if (dIdx == 2 || dIdx == 6) chance += (gene >> 1u);
+
+  // Root growth is possible but rarer.
+  if (dIdx == 4 || dIdx == 3 || dIdx == 5) chance = (chance * 3u) >> 2;
+
+  chance += (plantData - 170u) >> 3; // 0..10
+  chance = min(chance, 92u);
+
+  uint r = randByte(uvec2(plantC), salt);
+  if (r >= chance) return;
+
+  uint give = 60u + gene * 6u;
+  if (plantData <= give + 8u) return;
+
+  plantData -= give;
+  plantMeta = packPlantMeta(dir, gene, 3u);
+
+  uint r2 = randByte(uvec2(plantC), salt + 13u);
+  int rot = int(r2 % 3u) - 1;
+  int childDir = (dIdx + rot + 8) % 8;
+
+  uint childGene = gene;
+  if (r2 < 18u && childGene < 7u) childGene += 1u;
+  else if (r2 > 236u && childGene > 0u) childGene -= 1u;
+
+  tgtId = P_PLANT;
+  tgtTemp = plantTemp;
+  tgtData = give;
+  tgtMeta = packPlantMeta(uint(childDir), childGene, 2u);
+}
+
 uvec4 setId(uvec4 s, uint id) {
   s.r = id;
   return s;
@@ -222,6 +308,7 @@ uvec4 selfUpdate(ivec2 c, uvec4 s, uint salt) {
   uint id = s.r;
   uint temp = s.g;
   uint data = s.b;
+  uint meta = s.a;
 
   uvec4 p = loadProps(id);
   uint pf = p.b;
@@ -284,8 +371,11 @@ uvec4 selfUpdate(ivec2 c, uvec4 s, uint salt) {
       id = P_DIRT;
     }
   } else if (id == P_PLANT) {
-    // Plant hydration decays (data = hydration).
+    // Plant energy decays, and growth cooldown counts down.
     if (data > 0u) data -= 1u;
+    uint cd = (meta >> 6u) & 3u;
+    if (cd > 0u) cd -= 1u;
+    meta = (meta & 63u) | (cd << 6u);
   } else if (id == P_ACID) {
     // Acid slowly loses strength.
     if (data > 0u && (randByte(uvec2(c), salt) < 6u)) data -= 1u;
@@ -298,6 +388,7 @@ uvec4 selfUpdate(ivec2 c, uvec4 s, uint salt) {
   s.r = id;
   s.g = temp;
   s.b = data;
+  s.a = meta;
   return s;
 }
 
@@ -330,6 +421,8 @@ void main() {
   uint bTemp = b.g;
   uint aData = a.b;
   uint bData = b.b;
+  uint aMeta = a.a;
+  uint bMeta = b.a;
 
   uvec4 aP = loadProps(aId);
   uvec4 bP = loadProps(bId);
@@ -338,11 +431,28 @@ void main() {
 
   // --- Pair chemistry ---
 
-  // Plant hydration: touching water recharges hydration.
+  // Plant energy exchange + refuel near water/soil.
+  if (aId == P_PLANT && bId == P_PLANT) {
+    int diff = int(aData) - int(bData);
+    int transfer = diff / 8;
+    if (transfer != 0) {
+      aData = clampU8(int(aData) - transfer);
+      bData = clampU8(int(bData) + transfer);
+    }
+  }
+
   if (aId == P_PLANT && bId == P_WATER) {
-    aData = aData > 210u ? aData : 210u;
+    aData = min(255u, aData + 26u);
   } else if (bId == P_PLANT && aId == P_WATER) {
-    bData = bData > 210u ? bData : 210u;
+    bData = min(255u, bData + 26u);
+  } else if (aId == P_PLANT && bId == P_MUD) {
+    aData = min(255u, aData + 12u);
+  } else if (bId == P_PLANT && aId == P_MUD) {
+    bData = min(255u, bData + 12u);
+  } else if (aId == P_PLANT && bId == P_DIRT) {
+    aData = min(150u, aData + 2u);
+  } else if (bId == P_PLANT && aId == P_DIRT) {
+    bData = min(150u, bData + 2u);
   }
 
   // Dirt + water -> mud.
@@ -453,24 +563,11 @@ void main() {
     }
   }
 
-  // Plant spreads into air when hydrated.
-  {
-    uint r = randByte(uvec2(aC), 201u + u_passSalt);
-    if (aId == P_PLANT && bId == P_EMPTY && aData > 20u) {
-      if (r < 10u) {
-        bId = P_PLANT;
-        bTemp = aTemp;
-        bData = aData - 20u;
-        aData = aData - 20u;
-      }
-    } else if (bId == P_PLANT && aId == P_EMPTY && bData > 20u) {
-      if (r < 10u) {
-        aId = P_PLANT;
-        aTemp = bTemp;
-        aData = bData - 20u;
-        bData = bData - 20u;
-      }
-    }
+  // Plant grows with directional branching (metadata-driven).
+  if (aId == P_PLANT && bId == P_EMPTY) {
+    tryPlantGrow(aC, u_dir, aId, aTemp, aData, aMeta, bId, bTemp, bData, bMeta, 201u + u_passSalt);
+  } else if (bId == P_PLANT && aId == P_EMPTY) {
+    tryPlantGrow(bC, -u_dir, bId, bTemp, bData, bMeta, aId, aTemp, aData, aMeta, 203u + u_passSalt);
   }
 
   // Apply the updated ids/data back.
@@ -480,6 +577,8 @@ void main() {
   b.g = bTemp;
   a.b = aData;
   b.b = bData;
+  a.a = aMeta;
+  b.a = bMeta;
 
   // Reload props after chemistry changes.
   aP = loadProps(aId);
@@ -574,8 +673,30 @@ uniform ivec2 u_size;
 uniform ivec2 u_center;
 uniform int u_radius;
 uniform uvec4 u_paint;
+uniform uint u_seed;
+uniform uint u_tick;
 
 layout(location = 0) out uvec4 outState;
+
+const uint P_PLANT = 7u;
+
+uint hashU32(uint x) {
+  x ^= x >> 16;
+  x *= 0x7feb352du;
+  x ^= x >> 15;
+  x *= 0x846ca68bu;
+  x ^= x >> 16;
+  return x;
+}
+
+uint randByte(uvec2 p, uint salt) {
+  uint h = p.x * 374761393u + p.y * 668265263u;
+  h ^= u_seed * 2654435761u;
+  h ^= u_tick * 2246822519u;
+  h ^= salt * 3266489917u;
+  h = hashU32(h);
+  return h & 255u;
+}
 
 void main() {
   ivec2 c = ivec2(gl_FragCoord.xy);
@@ -589,7 +710,33 @@ void main() {
   int r2 = u_radius * u_radius;
   int dist2 = d.x * d.x + d.y * d.y;
 
-  if (dist2 <= r2) outState = u_paint;
+  if (dist2 <= r2) {
+    uvec4 s = u_paint;
+
+    // Plant gets per-cell randomized growth metadata so it grows in branching patterns.
+    if (s.r == P_PLANT) {
+      uint r0 = randByte(uvec2(c), 17u);
+      uint r1 = randByte(uvec2(c), 19u);
+
+      // Favor upward growth directions for nicer initial shapes.
+      uint dir;
+      if (r0 < 190u) {
+        uint k = r1 % 3u;
+        dir = (k == 0u) ? 0u : ((k == 1u) ? 1u : 7u);
+      } else {
+        dir = r1 & 7u;
+      }
+
+      uint gene = (r1 >> 3u) & 7u;
+      gene = 3u + (gene >> 1u); // 3..6
+      uint cooldown = 0u;
+
+      s.a = (dir & 7u) | ((gene & 7u) << 3u) | (cooldown << 6u);
+      if (s.b < 120u) s.b = 120u;
+    }
+
+    outState = s;
+  }
   else outState = cur;
 }
 `;
