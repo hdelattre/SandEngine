@@ -355,9 +355,10 @@ export class GpuSim {
     const dr = [1, -1];
     const horiz = [1, 0];
 
-    // The first matter pass is the "self tick" for per-cell updates.
-    this._matterPass(down[0], down[1], 0, 1, 10);
-    this._matterPass(down[0], down[1], 1, 0, 11);
+    // Single down pass per tick (alternating parity) keeps fall speeds reasonable.
+    // The down pass also performs the per-cell "self tick".
+    const pY = /** @type {0|1} */ (this.tick & 1);
+    this._matterPass(down[0], down[1], pY, 1, 10 + pY);
 
     const diagFirst = (this.tick & 1) === 0 ? dl : dr;
     const diagSecond = (this.tick & 1) === 0 ? dr : dl;

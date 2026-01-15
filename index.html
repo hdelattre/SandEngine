@@ -17,6 +17,10 @@
         <button id="stepBtn" type="button">Step</button>
         <button id="clearBtn" type="button">Clear</button>
         <label class="control">
+          <span>Level</span>
+          <select id="levelSelect"></select>
+        </label>
+        <label class="control">
           <span>Particle</span>
           <select id="particleSelect"></select>
         </label>
@@ -56,6 +60,7 @@
         <div><b>Paste Image</b>: Ctrl/Cmd+V (Shift = no scale)</div>
         <div><b>Hotkeys</b>: Space pause • 1–0, -, = select • [ ] brush • T temp view</div>
         <div class="hint__small" id="hintStatus"></div>
+        <div class="hint__small" id="levelHint"></div>
       </div>
     </main>
 

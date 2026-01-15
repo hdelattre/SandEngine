@@ -2,6 +2,7 @@
 
 import { GpuSim } from "./gpu-sim.js";
 import { buildPaletteTexels, buildPropTexels, createParticleDefs, defaultCellForParticle, Particle } from "./particles.js";
+import { createLevels, LEVEL_ID } from "./levels.js";
 
 /** @typedef {import('./types.js').ViewMode} ViewMode */
 
@@ -29,11 +30,13 @@ const hintStatusEl = /** @type {HTMLElement} */ (document.getElementById("hintSt
 const playPauseBtn = /** @type {HTMLButtonElement} */ (document.getElementById("playPauseBtn"));
 const stepBtn = /** @type {HTMLButtonElement} */ (document.getElementById("stepBtn"));
 const clearBtn = /** @type {HTMLButtonElement} */ (document.getElementById("clearBtn"));
+const levelSelect = /** @type {HTMLSelectElement} */ (document.getElementById("levelSelect"));
 const particleSelect = /** @type {HTMLSelectElement} */ (document.getElementById("particleSelect"));
 const brushSize = /** @type {HTMLInputElement} */ (document.getElementById("brushSize"));
 const stepsPerFrame = /** @type {HTMLInputElement} */ (document.getElementById("stepsPerFrame"));
 const viewSelect = /** @type {HTMLSelectElement} */ (document.getElementById("viewSelect"));
 const resSelect = /** @type {HTMLSelectElement} */ (document.getElementById("resSelect"));
+const levelHintEl = /** @type {HTMLElement} */ (document.getElementById("levelHint"));
 
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
@@ -50,6 +53,16 @@ particleSelect.value = String(Particle.SAND);
 const paletteTexels = buildPaletteTexels(particleDefs);
 const propTexels = buildPropTexels(particleDefs);
 
+const levels = createLevels(particleDefs);
+for (const lvl of levels) {
+  const opt = document.createElement("option");
+  opt.value = lvl.id;
+  opt.textContent = lvl.name;
+  levelSelect.appendChild(opt);
+}
+levelSelect.value = LEVEL_ID.SANDBOX;
+levelHintEl.textContent = "";
+
 /** @type {GpuSim | null} */
 let sim = null;
 
@@ -64,6 +77,13 @@ try {
 }
 
 if (!sim) throw new Error("WebGL2 required");
+
+/** @type {(typeof levels)[number]} */
+let activeLevel = levels.find((l) => l.id === levelSelect.value) ?? levels[0];
+let remainingBudget = /** @type {number | null} */ (null);
+let levelComplete = false;
+let goalStable = 0;
+let lastGoalCheckNow = 0;
 
 /** @type {{down: boolean, x: number, y: number, lastX: number, lastY: number, mode: 'paint'|'erase'}} */
 const brush = { down: false, x: 0, y: 0, lastX: 0, lastY: 0, mode: "paint" };
@@ -114,7 +134,22 @@ function forEachLinePoint(x0, y0, x1, y1, fn) {
  */
 function paintAt(x, y, mode) {
   const radius = Number(brushSize.value) | 0;
-  const id = mode === "erase" ? Particle.EMPTY : Number(particleSelect.value) | 0;
+  const inLevel = activeLevel.id !== LEVEL_ID.SANDBOX;
+
+  let id = mode === "erase" ? Particle.EMPTY : Number(particleSelect.value) | 0;
+  if (inLevel && mode !== "erase") {
+    const allowed = activeLevel.allowedPaintIds ?? [];
+    if (!allowed.includes(id)) id = allowed[0] ?? Particle.STONE;
+    if (remainingBudget !== null) {
+      const cost = activeLevel.paintCost(radius);
+      if (remainingBudget < cost) {
+        toast("out of budget", 1400);
+        return;
+      }
+      remainingBudget -= cost;
+    }
+  }
+
   const base = defaultCellForParticle(/** @type {any} */ (id));
   sim.paintCircle(x, y, { id, temp: base.temp, data: base.data, flags: base.flags }, radius);
 }
@@ -125,6 +160,7 @@ canvas.addEventListener("pointerdown", (e) => {
 
   const wantsPick = e.button === 1 || e.altKey;
   if (wantsPick) {
+    if (activeLevel.id !== LEVEL_ID.SANDBOX) return;
     const cell = sim.readCell(x, y);
     if (cell.id in particleDefs) particleSelect.value = String(cell.id);
     return;
@@ -172,7 +208,8 @@ stepBtn.addEventListener("click", () => {
 });
 
 clearBtn.addEventListener("click", () => {
-  sim.clear();
+  if (activeLevel.id !== LEVEL_ID.SANDBOX) setActiveLevel(activeLevel.id);
+  else sim.clear();
 });
 
 viewSelect.addEventListener("change", () => {
@@ -180,8 +217,13 @@ viewSelect.addEventListener("change", () => {
 });
 
 resSelect.addEventListener("change", () => {
+  if (activeLevel.id !== LEVEL_ID.SANDBOX) return;
   const { width, height } = parseRes(resSelect.value);
   sim.setWorldSize(width, height);
+});
+
+levelSelect.addEventListener("change", () => {
+  setActiveLevel(levelSelect.value);
 });
 
 let lastNow = performance.now();
@@ -207,6 +249,50 @@ function toast(msg, ms = 2200) {
   toastMsg = msg;
   toastUntil = performance.now() + ms;
 }
+
+/**
+ * @param {string} levelId
+ */
+function setActiveLevel(levelId) {
+  const next = levels.find((l) => l.id === levelId) ?? levels[0];
+  activeLevel = next;
+  levelComplete = false;
+  goalStable = 0;
+  lastGoalCheckNow = 0;
+  remainingBudget = typeof next.budget === "number" ? next.budget : null;
+
+  const isSandbox = next.id === LEVEL_ID.SANDBOX;
+
+  levelSelect.value = next.id;
+  particleSelect.disabled = !isSandbox;
+  resSelect.disabled = !isSandbox;
+  clearBtn.textContent = isSandbox ? "Clear" : "Restart";
+  levelHintEl.textContent = isSandbox ? "" : next.hints.join(" ");
+
+  if (isSandbox) {
+    particleSelect.value = String(Particle.SAND);
+    const { width, height } = parseRes(resSelect.value);
+    if (sim.width !== width || sim.height !== height) sim.setWorldSize(width, height);
+    else sim.clear();
+    return;
+  }
+
+  if (sim.width !== next.size.width || sim.height !== next.size.height) {
+    sim.setWorldSize(next.size.width, next.size.height);
+  } else {
+    sim.clear();
+  }
+
+  sim.seed = next.seed >>> 0;
+
+  const { source, width, height, originX, originY } = next.buildStamp();
+  sim.stampImage(source, width, height, originX, originY);
+
+  particleSelect.value = String(next.allowedPaintIds[0] ?? Particle.STONE);
+  toast(`${next.name}`, 1400);
+}
+
+setActiveLevel(levelSelect.value);
 
 /**
  * @param {number} w
@@ -258,6 +344,10 @@ async function decodeImageBlob(blob) {
 window.addEventListener("paste", async (e) => {
   const active = document.activeElement;
   if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement || active instanceof HTMLSelectElement) return;
+  if (activeLevel.id !== LEVEL_ID.SANDBOX) {
+    toast("paste disabled in levels", 1600);
+    return;
+  }
 
   const data = e.clipboardData;
   if (!data) return;
@@ -324,7 +414,8 @@ window.addEventListener("keydown", (e) => {
   }
 
   if (e.key === "c" || e.key === "C") {
-    sim.clear();
+    if (activeLevel.id !== LEVEL_ID.SANDBOX) setActiveLevel(activeLevel.id);
+    else sim.clear();
     return;
   }
 
@@ -363,7 +454,10 @@ window.addEventListener("keydown", (e) => {
     v: Particle.BATTERY,
   };
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-  if (k in hotkeys) particleSelect.value = String(hotkeys[k]);
+  if (k in hotkeys) {
+    if (activeLevel.id !== LEVEL_ID.SANDBOX) return;
+    particleSelect.value = String(hotkeys[k]);
+  }
 });
 
 function loop(now) {
@@ -388,6 +482,21 @@ function loop(now) {
     stepOnce = false;
   }
 
+  if (activeLevel.goal && !levelComplete && now - lastGoalCheckNow > 250) {
+    lastGoalCheckNow = now;
+    const goal = activeLevel.goal;
+    const cell = sim.readCell(goal.x, goal.y);
+    if (cell.id === goal.wantId) goalStable++;
+    else goalStable = 0;
+
+    if (goalStable >= goal.stableChecks) {
+      levelComplete = true;
+      running = false;
+      playPauseBtn.textContent = "Play";
+      toast("level complete", 4000);
+    }
+  }
+
   sim.render();
 
   const dt = now - lastNow;
@@ -396,7 +505,10 @@ function loop(now) {
   if (now - lastStatusNow > 180) {
     lastStatusNow = now;
     const msg = now < toastUntil && toastMsg ? ` • ${toastMsg}` : "";
-    setText(statusEl, `${sim.width}×${sim.height} • tick ${sim.tick} • ${fps.toFixed(0)} fps${msg}`);
+    const lvl = activeLevel.id === LEVEL_ID.SANDBOX ? "" : ` • ${activeLevel.name}`;
+    const budget = remainingBudget === null ? "" : ` • stone ${remainingBudget}`;
+    const done = levelComplete ? " • complete" : "";
+    setText(statusEl, `${sim.width}×${sim.height}${lvl}${budget}${done} • tick ${sim.tick} • ${fps.toFixed(0)} fps${msg}`);
   }
 
   requestAnimationFrame(loop);
