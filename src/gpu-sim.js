@@ -337,6 +337,8 @@ export class GpuSim {
 
     this._matterPass(horiz[0], horiz[1], 0, 0, 30);
     this._matterPass(horiz[0], horiz[1], 1, 0, 31);
+    this._matterPass(horiz[0], horiz[1], 0, 0, 32);
+    this._matterPass(horiz[0], horiz[1], 1, 0, 33);
 
     this.tick++;
   }
