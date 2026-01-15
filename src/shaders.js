@@ -165,6 +165,8 @@ const uint T_FREEZE = 105u;
 const uint T_ICE_MELT = 145u;
 const uint T_BRINE_FREEZE = 85u;
 const uint T_BRINE_EVAP = 175u;
+const uint LAVA_HARDEN_THRESHOLD = 180u;
+const uint T_LAVA_RESOFTEN = 170u;
 
 bool inBounds(ivec2 c) {
   return c.x >= 0 && c.y >= 0 && c.x < u_size.x && c.y < u_size.y;
@@ -342,7 +344,9 @@ uvec4 selfUpdate(ivec2 c, uvec4 s, uint salt) {
   int a = int(u_ambientTemp);
   int diff = a - t;
   int div = hasFlag(pf, FLAG_GAS) ? 14 : (hasFlag(pf, FLAG_LIQUID) ? 45 : 90);
-  if (id == P_LAVA) div = 180;
+  // Lava doesn't cool toward ambient unless exposed; heat loss is handled via
+  // diffusion (and extra surface cooling in the lava-specific block).
+  if (id == P_LAVA) div = 1024;
   else if (id == P_STONE) div = 140;
   t += diff / div;
   temp = clampU8(t);
@@ -401,9 +405,56 @@ uvec4 selfUpdate(ivec2 c, uvec4 s, uint salt) {
       meta = 0u;
     }
   } else if (id == P_LAVA) {
-    if (temp <= T_LAVA_SOLIDIFY) {
-      id = P_STONE;
-      data = 0u;
+    // Lava only hardens after being exposed to air/gas and sufficiently cooled.
+    bool exposed = false;
+    ivec2 n;
+
+    n = c + ivec2(1, 0);
+    if (!exposed && inBounds(n)) {
+      uint nid = loadState(n).r;
+      exposed = (nid == P_EMPTY) || (nid == P_SMOKE) || (nid == P_STEAM);
+    }
+    n = c + ivec2(-1, 0);
+    if (!exposed && inBounds(n)) {
+      uint nid = loadState(n).r;
+      exposed = (nid == P_EMPTY) || (nid == P_SMOKE) || (nid == P_STEAM);
+    }
+    n = c + ivec2(0, 1);
+    if (!exposed && inBounds(n)) {
+      uint nid = loadState(n).r;
+      exposed = (nid == P_EMPTY) || (nid == P_SMOKE) || (nid == P_STEAM);
+    }
+    n = c + ivec2(0, -1);
+    if (!exposed && inBounds(n)) {
+      uint nid = loadState(n).r;
+      exposed = (nid == P_EMPTY) || (nid == P_SMOKE) || (nid == P_STEAM);
+    }
+
+    if (exposed) {
+      // Extra surface cooling to make lava spread before crusting.
+      int t2 = int(temp);
+      int a2 = int(u_ambientTemp);
+      int d2 = t2 - a2;
+      if (d2 > 0) t2 -= 1 + (d2 / 48); // 1..3
+      temp = clampU8(t2);
+
+      if (temp <= T_LAVA_SOLIDIFY) {
+        uint under = T_LAVA_SOLIDIFY - temp;
+        uint inc = 1u + (under >> 5u); // 1..4
+        uint r = randByte(uvec2(c), salt);
+        if (r < 48u) inc += 1u;
+        data = min(255u, data + inc);
+        if (data >= LAVA_HARDEN_THRESHOLD) {
+          id = P_STONE;
+          data = 0u;
+          meta = 0u;
+        }
+      } else if (temp >= T_LAVA_RESOFTEN) {
+        if (data > 0u) data -= 1u;
+      }
+    } else {
+      // Not exposed: harden progress relaxes.
+      if (data > 0u) data = data > 2u ? (data - 2u) : 0u;
     }
   } else if (id == P_MUD) {
     // Mud slowly dries when warm.
@@ -575,14 +626,18 @@ void main() {
   // Lava + water -> stone + steam.
   if (aId == P_LAVA && (bId == P_WATER || bId == P_ICE || bId == P_BRINE)) {
     aId = P_STONE;
+    aMeta = 0u;
     bId = P_STEAM;
     bTemp = bTemp > 230u ? bTemp : 230u;
     bData = 170u;
+    bMeta = 0u;
   } else if (bId == P_LAVA && (aId == P_WATER || aId == P_ICE || aId == P_BRINE)) {
     bId = P_STONE;
+    bMeta = 0u;
     aId = P_STEAM;
     aTemp = aTemp > 230u ? aTemp : 230u;
     aData = 170u;
+    aMeta = 0u;
   }
 
   // Lava ignites flammables on contact.

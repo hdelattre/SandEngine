@@ -34,7 +34,8 @@
  *
  * Note: `flags` here is *per-cell metadata* stored in the world texture's A channel.
  * It's distinct from `ParticleDef.flags` (per-particle physical category flags).
- * V1 uses `flags` primarily for Plant growth (direction/gene/cooldown bitpacking).
+ * V1 uses `flags` for per-cell state like Plant growth (direction/gene/cooldown bitpacking)
+ * and Wire cooldowns/charge helpers.
  */
 
 /**
