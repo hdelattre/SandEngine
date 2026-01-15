@@ -25,6 +25,7 @@ function setText(el, msg) {
 }
 
 const canvas = /** @type {HTMLCanvasElement} */ (document.getElementById("canvas"));
+const cursorCanvas = /** @type {HTMLCanvasElement} */ (document.getElementById("cursorCanvas"));
 const statusEl = /** @type {HTMLElement} */ (document.getElementById("status"));
 const hintStatusEl = /** @type {HTMLElement} */ (document.getElementById("hintStatus"));
 const playPauseBtn = /** @type {HTMLButtonElement} */ (document.getElementById("playPauseBtn"));
@@ -37,8 +38,16 @@ const stepsPerFrame = /** @type {HTMLInputElement} */ (document.getElementById("
 const viewSelect = /** @type {HTMLSelectElement} */ (document.getElementById("viewSelect"));
 const resSelect = /** @type {HTMLSelectElement} */ (document.getElementById("resSelect"));
 const levelHintEl = /** @type {HTMLElement} */ (document.getElementById("levelHint"));
+const helpModal = /** @type {HTMLDivElement} */ (document.getElementById("helpModal"));
+const helpBackdrop = /** @type {HTMLDivElement} */ (document.getElementById("helpBackdrop"));
+const helpCloseBtn = /** @type {HTMLButtonElement} */ (document.getElementById("helpCloseBtn"));
+const helpBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById("helpBtn"));
 
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+
+/** @type {CanvasRenderingContext2D | null} */
+const cursorCtx = cursorCanvas.getContext("2d");
+if (cursorCtx) cursorCtx.imageSmoothingEnabled = true;
 
 const particleDefs = createParticleDefs();
 for (const id of Object.values(Particle)) {
@@ -226,6 +235,23 @@ levelSelect.addEventListener("change", () => {
   setActiveLevel(levelSelect.value);
 });
 
+function openHelp() {
+  helpModal.hidden = false;
+  helpCloseBtn.focus();
+}
+
+function closeHelp() {
+  helpModal.hidden = true;
+  helpBtn?.focus();
+}
+
+helpBtn?.addEventListener("click", () => {
+  if (helpModal.hidden) openHelp();
+  else closeHelp();
+});
+helpCloseBtn.addEventListener("click", closeHelp);
+helpBackdrop.addEventListener("click", closeHelp);
+
 let lastNow = performance.now();
 let fps = 60;
 let lastStatusNow = 0;
@@ -406,6 +432,20 @@ window.addEventListener("paste", async (e) => {
 window.addEventListener("keydown", (e) => {
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement) return;
 
+  if (!helpModal.hidden) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeHelp();
+    }
+    return;
+  }
+
+  if (e.key === "?" || e.key === "h" || e.key === "H") {
+    e.preventDefault();
+    openHelp();
+    return;
+  }
+
   if (e.code === "Space") {
     e.preventDefault();
     running = !running;
@@ -462,6 +502,7 @@ window.addEventListener("keydown", (e) => {
 
 function loop(now) {
   sim.resizeCanvasToDisplaySize();
+  resizeCanvasToDisplaySize(cursorCanvas);
 
   // Brush gets applied in the animation loop so we don't thrash GPU from event handlers.
   if (brush.down) {
@@ -498,6 +539,7 @@ function loop(now) {
   }
 
   sim.render();
+  drawBrushCursor();
 
   const dt = now - lastNow;
   lastNow = now;
@@ -515,3 +557,61 @@ function loop(now) {
 }
 
 requestAnimationFrame(loop);
+
+/**
+ * @param {HTMLCanvasElement} c
+ */
+function resizeCanvasToDisplaySize(c) {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = c.getBoundingClientRect();
+  const w = Math.max(1, Math.round(rect.width * dpr));
+  const h = Math.max(1, Math.round(rect.height * dpr));
+  if (c.width !== w || c.height !== h) {
+    c.width = w;
+    c.height = h;
+  }
+}
+
+function drawBrushCursor() {
+  if (!cursorCtx) return;
+  const w = cursorCanvas.width;
+  const h = cursorCanvas.height;
+  cursorCtx.clearRect(0, 0, w, h);
+  if (!cursor.has) return;
+
+  const radius = Number(brushSize.value) | 0;
+  if (radius <= 0) return;
+
+  const x = clamp(cursor.x, 0, sim.width - 1);
+  const y = clamp(cursor.y, 0, sim.height - 1);
+
+  const sx = w / sim.width;
+  const sy = h / sim.height;
+  const cx = (x + 0.5) * sx;
+  const cy = h - (y + 0.5) * sy;
+
+  const rx = (radius + 0.5) * sx;
+  const ry = (radius + 0.5) * sy;
+
+  const cellPx = Math.max(1, Math.min(3, Math.round(Math.min(sx, sy))));
+  const color = brush.down && brush.mode === "erase" ? "rgba(255, 96, 96, 0.45)" : "rgba(124, 196, 255, 0.4)";
+
+  cursorCtx.save();
+  cursorCtx.translate(cx, cy);
+
+  cursorCtx.beginPath();
+  cursorCtx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
+  cursorCtx.strokeStyle = "rgba(0, 0, 0, 0.28)";
+  cursorCtx.lineWidth = cellPx + 2;
+  cursorCtx.stroke();
+
+  cursorCtx.setLineDash([6 * cellPx, 4 * cellPx]);
+  cursorCtx.beginPath();
+  cursorCtx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
+  cursorCtx.strokeStyle = color;
+  cursorCtx.lineWidth = cellPx;
+  cursorCtx.stroke();
+  cursorCtx.setLineDash([]);
+
+  cursorCtx.restore();
+}
