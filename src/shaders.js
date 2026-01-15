@@ -594,6 +594,124 @@ void main() {
 }
 `;
 
+export const STAMP_FRAG = `#version 300 es
+precision highp float;
+precision highp int;
+precision highp usampler2D;
+
+uniform usampler2D u_state;
+uniform sampler2D u_image;
+uniform sampler2D u_palette;
+uniform ivec2 u_size;
+uniform ivec2 u_imgSize;
+uniform ivec2 u_origin;
+uniform uint u_ambientTemp;
+
+layout(location = 0) out uvec4 outState;
+
+const uint P_EMPTY = 0u;
+const uint P_SAND = 1u;
+const uint P_WATER = 2u;
+const uint P_STONE = 3u;
+const uint P_DIRT = 4u;
+const uint P_MUD = 5u;
+const uint P_OIL = 6u;
+const uint P_PLANT = 7u;
+const uint P_LAVA = 11u;
+const uint P_ACID = 12u;
+
+const int CAND_COUNT = 9;
+const int CANDS[CAND_COUNT] = int[CAND_COUNT](
+  int(P_SAND),
+  int(P_WATER),
+  int(P_STONE),
+  int(P_DIRT),
+  int(P_MUD),
+  int(P_OIL),
+  int(P_PLANT),
+  int(P_LAVA),
+  int(P_ACID)
+);
+
+uvec4 loadState(ivec2 c) {
+  return texelFetch(u_state, c, 0);
+}
+
+uvec4 makeCell(uint id) {
+  uint temp = u_ambientTemp;
+  uint data = 0u;
+  if (id == P_MUD) data = 200u;
+  else if (id == P_ACID) data = 180u;
+  else if (id == P_LAVA) temp = 250u;
+  return uvec4(id, temp, data, 0u);
+}
+
+float colorDist(vec3 a, vec3 b) {
+  vec3 d = a - b;
+  return dot(d, d);
+}
+
+uint mapColor(vec3 rgb) {
+  float best = 1e9;
+  uint bestId = P_STONE;
+  for (int i = 0; i < CAND_COUNT; i++) {
+    int id = CANDS[i];
+    vec3 pc = texelFetch(u_palette, ivec2(id, 0), 0).rgb;
+    float d = colorDist(rgb, pc);
+    if (d < best) {
+      best = d;
+      bestId = uint(id);
+    }
+  }
+  return bestId;
+}
+
+void main() {
+  ivec2 c = ivec2(gl_FragCoord.xy);
+  uvec4 cur = loadState(c);
+
+  // Preserve boundaries (bottom + side walls).
+  if (c.x == 0 || c.x == (u_size.x - 1) || c.y == 0) {
+    outState = cur;
+    return;
+  }
+
+  ivec2 ic = c - u_origin;
+  if (ic.x < 0 || ic.y < 0 || ic.x >= u_imgSize.x || ic.y >= u_imgSize.y) {
+    outState = cur;
+    return;
+  }
+
+  vec4 px = texelFetch(u_image, ic, 0);
+
+  // Treat transparency as "no-op" so you can paste over an existing world.
+  if (px.a < 0.05) {
+    outState = cur;
+    return;
+  }
+
+  float mx = max(max(px.r, px.g), px.b);
+  float mn = min(min(px.r, px.g), px.b);
+  float sat = (mx - mn) / max(mx, 1e-5);
+  float lum = dot(px.rgb, vec3(0.2126, 0.7152, 0.0722));
+
+  // Near-white backgrounds become air (common for pasted images).
+  if (lum > 0.97 && sat < 0.08) {
+    outState = makeCell(P_EMPTY);
+    return;
+  }
+
+  // Very dark, low-saturation pixels become stone (useful for outlines).
+  if (lum < 0.05 && sat < 0.25) {
+    outState = makeCell(P_STONE);
+    return;
+  }
+
+  uint id = mapColor(px.rgb);
+  outState = makeCell(id);
+}
+`;
+
 export const RENDER_FRAG = `#version 300 es
 precision highp float;
 precision highp int;

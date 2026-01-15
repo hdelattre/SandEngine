@@ -67,6 +67,8 @@ if (!sim) throw new Error("WebGL2 required");
 
 /** @type {{down: boolean, x: number, y: number, lastX: number, lastY: number, mode: 'paint'|'erase'}} */
 const brush = { down: false, x: 0, y: 0, lastX: 0, lastY: 0, mode: "paint" };
+/** @type {{x: number, y: number, has: boolean}} */
+const cursor = { x: Math.floor(sim.width / 2), y: Math.floor(sim.height / 2), has: false };
 
 /**
  * @param {PointerEvent} e
@@ -137,10 +139,14 @@ canvas.addEventListener("pointerdown", (e) => {
 });
 
 canvas.addEventListener("pointermove", (e) => {
-  if (!brush.down) return;
   const { x, y } = eventToGrid(e);
-  brush.x = x;
-  brush.y = y;
+  cursor.x = x;
+  cursor.y = y;
+  cursor.has = true;
+  if (brush.down) {
+    brush.x = x;
+    brush.y = y;
+  }
 });
 
 function endBrush() {
@@ -149,6 +155,9 @@ function endBrush() {
 
 canvas.addEventListener("pointerup", endBrush);
 canvas.addEventListener("pointercancel", endBrush);
+canvas.addEventListener("pointerleave", () => {
+  cursor.has = false;
+});
 
 let running = true;
 let stepOnce = false;
@@ -178,6 +187,8 @@ resSelect.addEventListener("change", () => {
 let lastNow = performance.now();
 let fps = 60;
 let lastStatusNow = 0;
+let toastMsg = "";
+let toastUntil = 0;
 
 /**
  * @param {number} v
@@ -187,6 +198,120 @@ let lastStatusNow = 0;
 function clamp(v, lo, hi) {
   return v < lo ? lo : v > hi ? hi : v;
 }
+
+/**
+ * @param {string} msg
+ * @param {number} ms
+ */
+function toast(msg, ms = 2200) {
+  toastMsg = msg;
+  toastUntil = performance.now() + ms;
+}
+
+/**
+ * @param {number} w
+ * @param {number} h
+ * @returns {HTMLCanvasElement | OffscreenCanvas}
+ */
+function makeOffscreenCanvas(w, h) {
+  if (typeof OffscreenCanvas !== "undefined") return new OffscreenCanvas(w, h);
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = h;
+  return c;
+}
+
+/**
+ * @param {Blob} blob
+ * @returns {Promise<{source: CanvasImageSource, width: number, height: number, cleanup: (() => void) | null}>}
+ */
+async function decodeImageBlob(blob) {
+  if ("createImageBitmap" in window) {
+    // @ts-ignore - createImageBitmap exists at runtime.
+    const bmp = await createImageBitmap(blob);
+    return {
+      source: bmp,
+      width: bmp.width,
+      height: bmp.height,
+      cleanup: typeof bmp.close === "function" ? () => bmp.close() : null,
+    };
+  }
+
+  const url = URL.createObjectURL(blob);
+  const img = new Image();
+  img.src = url;
+  try {
+    if (typeof img.decode === "function") await img.decode();
+    else {
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = reject;
+      });
+    }
+    return { source: img, width: img.naturalWidth || img.width, height: img.naturalHeight || img.height, cleanup: () => URL.revokeObjectURL(url) };
+  } catch (err) {
+    URL.revokeObjectURL(url);
+    throw err;
+  }
+}
+
+window.addEventListener("paste", async (e) => {
+  const active = document.activeElement;
+  if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement || active instanceof HTMLSelectElement) return;
+
+  const data = e.clipboardData;
+  if (!data) return;
+
+  /** @type {File | null} */
+  let file = null;
+  for (let i = 0; i < data.items.length; i++) {
+    const item = data.items[i];
+    if (item.type && item.type.startsWith("image/")) {
+      file = item.getAsFile();
+      if (file) break;
+    }
+  }
+  if (!file) return;
+
+  e.preventDefault();
+  toast("pasting image…", 1200);
+
+  try {
+    const { source, width: srcW, height: srcH, cleanup } = await decodeImageBlob(file);
+    const maxW = Math.max(1, sim.width - 2);
+    const maxH = Math.max(1, sim.height - 1);
+    const scale = e.shiftKey ? 1 : Math.min(1, maxW / Math.max(1, srcW), maxH / Math.max(1, srcH));
+    const w = clamp(Math.max(1, Math.round(srcW * scale)), 1, maxW);
+    const h = clamp(Math.max(1, Math.round(srcH * scale)), 1, maxH);
+
+    const offscreen = makeOffscreenCanvas(w, h);
+    // @ts-ignore - OffscreenCanvas/HTMLCanvasElement share getContext at runtime.
+    const ctx = offscreen.getContext("2d");
+    if (!ctx) throw new Error("2D canvas unavailable");
+    ctx.imageSmoothingEnabled = true;
+    // @ts-ignore - imageSmoothingQuality isn't in all TS libs.
+    if ("imageSmoothingQuality" in ctx) ctx.imageSmoothingQuality = "high";
+    ctx.clearRect(0, 0, w, h);
+    // @ts-ignore - CanvasImageSource is valid for drawImage.
+    ctx.drawImage(source, 0, 0, w, h);
+
+    if (cleanup) cleanup();
+
+    const cx = cursor.has ? cursor.x : Math.floor(sim.width / 2);
+    const cy = cursor.has ? cursor.y : Math.floor(sim.height / 2);
+    let ox = Math.round(cx - w / 2);
+    let oy = Math.round(cy - h / 2);
+    ox = clamp(ox, 1, sim.width - 1 - w);
+    oy = clamp(oy, 1, sim.height - h);
+
+    // @ts-ignore - OffscreenCanvas is a valid CanvasImageSource at runtime.
+    sim.stampImage(offscreen, w, h, ox, oy);
+    toast(`pasted ${srcW}×${srcH} → ${w}×${h}`, 2600);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    toast(`paste failed: ${msg}`, 3000);
+  }
+});
 
 window.addEventListener("keydown", (e) => {
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement) return;
@@ -265,7 +390,8 @@ function loop(now) {
   fps = fps * 0.9 + (1000 / Math.max(1, dt)) * 0.1;
   if (now - lastStatusNow > 180) {
     lastStatusNow = now;
-    setText(statusEl, `${sim.width}×${sim.height} • tick ${sim.tick} • ${fps.toFixed(0)} fps`);
+    const msg = now < toastUntil && toastMsg ? ` • ${toastMsg}` : "";
+    setText(statusEl, `${sim.width}×${sim.height} • tick ${sim.tick} • ${fps.toFixed(0)} fps${msg}`);
   }
 
   requestAnimationFrame(loop);

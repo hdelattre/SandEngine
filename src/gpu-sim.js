@@ -1,7 +1,7 @@
 // @ts-check
 
 import { DEFAULT_AMBIENT_TEMP } from "./particles.js";
-import { CLEAR_FRAG, FULLSCREEN_VERT, HEAT_FRAG, MATTER_FRAG, PAINT_FRAG, RENDER_FRAG } from "./shaders.js";
+import { CLEAR_FRAG, FULLSCREEN_VERT, HEAT_FRAG, MATTER_FRAG, PAINT_FRAG, RENDER_FRAG, STAMP_FRAG } from "./shaders.js";
 import {
   createFramebufferForTexture,
   createFullscreenVao,
@@ -51,11 +51,21 @@ export class GpuSim {
     this._clear = this._createClearProgram();
     this._matter = this._createMatterProgram();
     this._paint = this._createPaintProgram();
+    this._stamp = this._createStampProgram();
     this._render = this._createRenderProgram();
 
     // Constant textures.
     this._paletteTex = createRgba8Texture(gl, { width: 256, height: 1, data: paletteTexels });
     this._propTex = createRgba8uiTexture(gl, { width: 256, height: 1, data: propTexels });
+
+    this._imgTex = gl.createTexture();
+    if (!this._imgTex) throw new Error("createTexture failed");
+    gl.bindTexture(gl.TEXTURE_2D, this._imgTex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    this._imgSize = { width: 0, height: 0 };
 
     this._stateTex = /** @type {[WebGLTexture, WebGLTexture]} */ ([null, null]);
     this._stateFb = /** @type {[WebGLFramebuffer, WebGLFramebuffer]} */ ([null, null]);
@@ -139,6 +149,26 @@ export class GpuSim {
         center: mustGetUniform(gl, program, "u_center"),
         radius: mustGetUniform(gl, program, "u_radius"),
         paint: mustGetUniform(gl, program, "u_paint"),
+      },
+    };
+  }
+
+  /**
+   * @returns {{program: WebGLProgram, u: Record<string, WebGLUniformLocation>}}
+   */
+  _createStampProgram() {
+    const gl = this.gl;
+    const program = createProgram(gl, FULLSCREEN_VERT, STAMP_FRAG);
+    return {
+      program,
+      u: {
+        state: mustGetUniform(gl, program, "u_state"),
+        image: mustGetUniform(gl, program, "u_image"),
+        palette: mustGetUniform(gl, program, "u_palette"),
+        size: mustGetUniform(gl, program, "u_size"),
+        imgSize: mustGetUniform(gl, program, "u_imgSize"),
+        origin: mustGetUniform(gl, program, "u_origin"),
+        ambientTemp: mustGetUniform(gl, program, "u_ambientTemp"),
       },
     };
   }
@@ -365,6 +395,52 @@ export class GpuSim {
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this._srcTex());
     gl.uniform1i(u.state, 0);
+
+    this._draw(program, this._dstFb(), this.width, this.height);
+    this._swap();
+  }
+
+  /**
+   * Stamps an image into the sim by mapping pixel colors to particle IDs on the GPU.
+   * `originX/originY` is the bottom-left world coordinate where the image's bottom-left will be placed.
+   *
+   * @param {CanvasImageSource} image
+   * @param {number} imgWidth
+   * @param {number} imgHeight
+   * @param {number} originX
+   * @param {number} originY
+   */
+  stampImage(image, imgWidth, imgHeight, originX, originY) {
+    const gl = this.gl;
+
+    this._imgSize.width = imgWidth | 0;
+    this._imgSize.height = imgHeight | 0;
+
+    // Upload image to a regular RGBA8 texture (flipped so y=0 is bottom row).
+    gl.bindTexture(gl.TEXTURE_2D, this._imgTex);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, image);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+
+    const { program, u } = this._stamp;
+    gl.useProgram(program);
+    gl.uniform2i(u.size, this.width, this.height);
+    gl.uniform2i(u.imgSize, this._imgSize.width, this._imgSize.height);
+    gl.uniform2i(u.origin, originX | 0, originY | 0);
+    gl.uniform1ui(u.ambientTemp, this.ambientTemp >>> 0);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this._srcTex());
+    gl.uniform1i(u.state, 0);
+
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this._imgTex);
+    gl.uniform1i(u.image, 1);
+
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, this._paletteTex);
+    gl.uniform1i(u.palette, 2);
 
     this._draw(program, this._dstFb(), this.width, this.height);
     this._swap();
