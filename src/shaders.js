@@ -122,6 +122,7 @@ uniform int u_parity;
 uniform uint u_tick;
 uniform uint u_seed;
 uniform int u_selfStep;
+uniform int u_doMove;
 uniform uint u_ambientTemp;
 uniform uint u_passSalt;
 
@@ -875,87 +876,89 @@ void main() {
   bF = bP.b;
 
   // --- Movement ---
-  bool gravityPass = (u_dir.y != 0);
-  bool diagonalPass = gravityPass && (u_dir.x != 0);
-  if (gravityPass) {
-    bool aImmovable = hasFlag(aF, FLAG_IMMOVABLE) || (aP.a == 0u);
-    bool bImmovable = hasFlag(bF, FLAG_IMMOVABLE) || (bP.a == 0u);
-    if (!aImmovable && !bImmovable) {
-      uint aD = aP.r;
-      uint bD = bP.r;
-      if (aD > bD) {
-        // Prevent "falling sideways": only allow diagonal fall if straight-down is blocked.
-        if (diagonalPass && canFallDown(aC, aId, aP, aF)) {
-          // no swap
-        } else {
-          uint r = randByte(uvec2(aC), 251u + u_passSalt);
-          if (r < aP.a) {
-            uvec4 tmp = a;
-            a = b;
-            b = tmp;
+  if (u_doMove != 0) {
+    bool gravityPass = (u_dir.y != 0);
+    bool diagonalPass = gravityPass && (u_dir.x != 0);
+    if (gravityPass) {
+      bool aImmovable = hasFlag(aF, FLAG_IMMOVABLE) || (aP.a == 0u);
+      bool bImmovable = hasFlag(bF, FLAG_IMMOVABLE) || (bP.a == 0u);
+      if (!aImmovable && !bImmovable) {
+        uint aD = aP.r;
+        uint bD = bP.r;
+        if (aD > bD) {
+          // Prevent "falling sideways": only allow diagonal fall if straight-down is blocked.
+          if (diagonalPass && canFallDown(aC, aId, aP, aF)) {
+            // no swap
+          } else {
+            uint r = randByte(uvec2(aC), 251u + u_passSalt);
+            if (r < aP.a) {
+              uvec4 tmp = a;
+              a = b;
+              b = tmp;
+            }
           }
         }
       }
-    }
-  } else {
-    // Horizontal diffusion + liquid leveling (powders don't slide sideways).
-    bool aPowder = hasFlag(aF, FLAG_POWDER);
-    bool bPowder = hasFlag(bF, FLAG_POWDER);
-    bool aStatic = hasFlag(aF, FLAG_IMMOVABLE) || (aP.a == 0u);
-    bool bStatic = hasFlag(bF, FLAG_IMMOVABLE) || (bP.a == 0u);
-    if (!aStatic && !bStatic) {
-      bool aDisplaceable = (aId == P_EMPTY) || hasFlag(aF, FLAG_GAS) || hasFlag(aF, FLAG_ENERGY);
-      bool bDisplaceable = (bId == P_EMPTY) || hasFlag(bF, FLAG_GAS) || hasFlag(bF, FLAG_ENERGY);
+    } else {
+      // Horizontal diffusion + liquid leveling (powders don't slide sideways).
+      bool aPowder = hasFlag(aF, FLAG_POWDER);
+      bool bPowder = hasFlag(bF, FLAG_POWDER);
+      bool aStatic = hasFlag(aF, FLAG_IMMOVABLE) || (aP.a == 0u);
+      bool bStatic = hasFlag(bF, FLAG_IMMOVABLE) || (bP.a == 0u);
+      if (!aStatic && !bStatic) {
+        bool aDisplaceable = (aId == P_EMPTY) || hasFlag(aF, FLAG_GAS) || hasFlag(aF, FLAG_ENERGY);
+        bool bDisplaceable = (bId == P_EMPTY) || hasFlag(bF, FLAG_GAS) || hasFlag(bF, FLAG_ENERGY);
 
-      // Liquids push sideways more aggressively under "head" (simple pressure proxy).
-      // Only level sideways when the liquid can't fall straight down.
-      if (!aPowder && hasFlag(bF, FLAG_LIQUID) && aDisplaceable) {
-        if (canFallDown(bC, bId, bP, bF)) {
-          // no sideways move while falling
+        // Liquids push sideways more aggressively under "head" (simple pressure proxy).
+        // Only level sideways when the liquid can't fall straight down.
+        if (!aPowder && hasFlag(bF, FLAG_LIQUID) && aDisplaceable) {
+          if (canFallDown(bC, bId, bP, bF)) {
+            // no sideways move while falling
+          } else {
+            uint headFrom = columnMass2(bC);
+            uint headTo = columnMass2(aC);
+            int hd = int(headFrom) - int(headTo);
+            uint base = bP.a;
+            uint prob = (hd > 0) ? base : ((hd == 0) ? ((base * 3u) >> 2) : (base >> 2));
+            uint r = randByte(uvec2(aC), 93u + u_passSalt);
+            if (r < prob) {
+              uvec4 tmp = a;
+              a = b;
+              b = tmp;
+            }
+          }
+        } else if (!bPowder && hasFlag(aF, FLAG_LIQUID) && bDisplaceable) {
+          if (canFallDown(aC, aId, aP, aF)) {
+            // no sideways move while falling
+          } else {
+            uint headFrom = columnMass2(aC);
+            uint headTo = columnMass2(bC);
+            int hd = int(headFrom) - int(headTo);
+            uint base = aP.a;
+            uint prob = (hd > 0) ? base : ((hd == 0) ? ((base * 3u) >> 2) : (base >> 2));
+            uint r = randByte(uvec2(aC), 91u + u_passSalt);
+            if (r < prob) {
+              uvec4 tmp = a;
+              a = b;
+              b = tmp;
+            }
+          }
         } else {
-          uint headFrom = columnMass2(bC);
-          uint headTo = columnMass2(aC);
-          int hd = int(headFrom) - int(headTo);
-          uint base = bP.a;
-          uint prob = (hd > 0) ? base : ((hd == 0) ? ((base * 3u) >> 2) : (base >> 2));
-          uint r = randByte(uvec2(aC), 93u + u_passSalt);
-          if (r < prob) {
-            uvec4 tmp = a;
-            a = b;
-            b = tmp;
-          }
-        }
-      } else if (!bPowder && hasFlag(aF, FLAG_LIQUID) && bDisplaceable) {
-        if (canFallDown(aC, aId, aP, aF)) {
-          // no sideways move while falling
-        } else {
-          uint headFrom = columnMass2(aC);
-          uint headTo = columnMass2(bC);
-          int hd = int(headFrom) - int(headTo);
-          uint base = aP.a;
-          uint prob = (hd > 0) ? base : ((hd == 0) ? ((base * 3u) >> 2) : (base >> 2));
-          uint r = randByte(uvec2(aC), 91u + u_passSalt);
-          if (r < prob) {
-            uvec4 tmp = a;
-            a = b;
-            b = tmp;
-          }
-        }
-      } else {
-        // Non-liquid fluids diffuse more gently (mainly into air).
-        if (aId == P_EMPTY && !bPowder && isFluid(bF) && bId != P_EMPTY) {
-          uint r = randByte(uvec2(aC), 91u + u_passSalt);
-          if (r < (bP.a >> 1)) {
-            uvec4 tmp = a;
-            a = b;
-            b = tmp;
-          }
-        } else if (bId == P_EMPTY && !aPowder && isFluid(aF) && aId != P_EMPTY) {
-          uint r = randByte(uvec2(aC), 93u + u_passSalt);
-          if (r < (aP.a >> 1)) {
-            uvec4 tmp = a;
-            a = b;
-            b = tmp;
+          // Non-liquid fluids diffuse more gently (mainly into air).
+          if (aId == P_EMPTY && !bPowder && isFluid(bF) && bId != P_EMPTY) {
+            uint r = randByte(uvec2(aC), 91u + u_passSalt);
+            if (r < (bP.a >> 1)) {
+              uvec4 tmp = a;
+              a = b;
+              b = tmp;
+            }
+          } else if (bId == P_EMPTY && !aPowder && isFluid(aF) && aId != P_EMPTY) {
+            uint r = randByte(uvec2(aC), 93u + u_passSalt);
+            if (r < (aP.a >> 1)) {
+              uvec4 tmp = a;
+              a = b;
+              b = tmp;
+            }
           }
         }
       }

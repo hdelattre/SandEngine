@@ -129,6 +129,7 @@ export class GpuSim {
         tick: mustGetUniform(gl, program, "u_tick"),
         seed: mustGetUniform(gl, program, "u_seed"),
         selfStep: mustGetUniform(gl, program, "u_selfStep"),
+        doMove: mustGetUniform(gl, program, "u_doMove"),
         ambientTemp: mustGetUniform(gl, program, "u_ambientTemp"),
         passSalt: mustGetUniform(gl, program, "u_passSalt"),
       },
@@ -311,9 +312,10 @@ export class GpuSim {
    * @param {number} dy
    * @param {0|1} parity
    * @param {0|1} selfStep
+   * @param {0|1} doMove
    * @param {number} passSalt
    */
-  _matterPass(dx, dy, parity, selfStep, passSalt) {
+  _matterPass(dx, dy, parity, selfStep, doMove, passSalt) {
     const gl = this.gl;
     const { program, u } = this._matter;
 
@@ -324,6 +326,7 @@ export class GpuSim {
     gl.uniform1ui(u.tick, this.tick >>> 0);
     gl.uniform1ui(u.seed, this.seed >>> 0);
     gl.uniform1i(u.selfStep, selfStep);
+    gl.uniform1i(u.doMove, doMove);
     gl.uniform1ui(u.ambientTemp, this.ambientTemp >>> 0);
     gl.uniform1ui(u.passSalt, passSalt >>> 0);
 
@@ -358,20 +361,23 @@ export class GpuSim {
     // Single down pass per tick (alternating parity) keeps fall speeds reasonable.
     // The down pass also performs the per-cell "self tick".
     const pY = /** @type {0|1} */ (this.tick & 1);
-    this._matterPass(down[0], down[1], pY, 1, 10 + pY);
+    // Run a second vertical pass (other parity) with movement disabled so
+    // chemistry like ignition works equally in both directions.
+    this._matterPass(down[0], down[1], /** @type {0|1} */ (1 - pY), 0, 0, 8 + pY);
+    this._matterPass(down[0], down[1], pY, 1, 1, 10 + pY);
 
     const diagFirst = (this.tick & 1) === 0 ? dl : dr;
     const diagSecond = (this.tick & 1) === 0 ? dr : dl;
 
-    this._matterPass(diagFirst[0], diagFirst[1], 0, 0, 20);
-    this._matterPass(diagFirst[0], diagFirst[1], 1, 0, 21);
-    this._matterPass(diagSecond[0], diagSecond[1], 0, 0, 22);
-    this._matterPass(diagSecond[0], diagSecond[1], 1, 0, 23);
+    this._matterPass(diagFirst[0], diagFirst[1], 0, 0, 1, 20);
+    this._matterPass(diagFirst[0], diagFirst[1], 1, 0, 1, 21);
+    this._matterPass(diagSecond[0], diagSecond[1], 0, 0, 1, 22);
+    this._matterPass(diagSecond[0], diagSecond[1], 1, 0, 1, 23);
 
-    this._matterPass(horiz[0], horiz[1], 0, 0, 30);
-    this._matterPass(horiz[0], horiz[1], 1, 0, 31);
-    this._matterPass(horiz[0], horiz[1], 0, 0, 32);
-    this._matterPass(horiz[0], horiz[1], 1, 0, 33);
+    this._matterPass(horiz[0], horiz[1], 0, 0, 1, 30);
+    this._matterPass(horiz[0], horiz[1], 1, 0, 1, 31);
+    this._matterPass(horiz[0], horiz[1], 0, 0, 1, 32);
+    this._matterPass(horiz[0], horiz[1], 1, 0, 1, 33);
 
     this.tick++;
   }
