@@ -441,6 +441,16 @@ uvec4 selfUpdate(ivec2 c, uvec4 s, uint salt) {
     if (meta > 0u) meta -= 1u;
   }
 
+  // Open top boundary: gases/energy vent out of the world.
+  if (c.y == (u_size.y - 1) && id != P_EMPTY) {
+    if (hasFlag(pf, FLAG_GAS) || hasFlag(pf, FLAG_ENERGY)) {
+      id = P_EMPTY;
+      temp = u_ambientTemp;
+      data = 0u;
+      meta = 0u;
+    }
+  }
+
   s.r = id;
   s.g = temp;
   s.b = data;
