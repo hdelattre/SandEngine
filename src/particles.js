@@ -17,6 +17,12 @@ export const Particle = /** @type {const} */ ({
   STEAM: 10,
   LAVA: 11,
   ACID: 12,
+  ICE: 13,
+  SALT: 14,
+  BRINE: 15,
+  WIRE: 16,
+  SPARK: 17,
+  BATTERY: 18,
 });
 
 export const ParticleFlag = /** @type {const} */ ({
@@ -166,6 +172,54 @@ export function createParticleDefs() {
     mobility: 210,
     flags: ParticleFlag.LIQUID,
   });
+  defs[Particle.ICE] = makeDef(Particle.ICE, {
+    name: "Ice",
+    color: [180, 230, 255],
+    density: 170,
+    conductivity: 200,
+    mobility: 120,
+    flags: 0,
+  });
+  defs[Particle.SALT] = makeDef(Particle.SALT, {
+    name: "Salt",
+    color: [242, 242, 242],
+    density: 235,
+    conductivity: 70,
+    mobility: 255,
+    flags: ParticleFlag.POWDER | ParticleFlag.DISSOLVABLE,
+  });
+  defs[Particle.BRINE] = makeDef(Particle.BRINE, {
+    name: "Brine",
+    color: [62, 134, 206],
+    density: 205,
+    conductivity: 165,
+    mobility: 250,
+    flags: ParticleFlag.LIQUID,
+  });
+  defs[Particle.WIRE] = makeDef(Particle.WIRE, {
+    name: "Wire",
+    color: [186, 156, 116],
+    density: 255,
+    conductivity: 255,
+    mobility: 0,
+    flags: ParticleFlag.IMMOVABLE,
+  });
+  defs[Particle.SPARK] = makeDef(Particle.SPARK, {
+    name: "Spark",
+    color: [255, 245, 168],
+    density: 40,
+    conductivity: 20,
+    mobility: 255,
+    flags: ParticleFlag.GAS | ParticleFlag.ENERGY,
+  });
+  defs[Particle.BATTERY] = makeDef(Particle.BATTERY, {
+    name: "Battery",
+    color: [255, 96, 56],
+    density: 255,
+    conductivity: 220,
+    mobility: 0,
+    flags: ParticleFlag.IMMOVABLE,
+  });
 
   return defs;
 }
@@ -229,6 +283,17 @@ export function defaultCellForParticle(id) {
       return { temp: 250, data: 0, flags: 0 };
     case Particle.ACID:
       return { temp: DEFAULT_AMBIENT_TEMP, data: 180, flags: 0 };
+    case Particle.ICE:
+      return { temp: 90, data: 0, flags: 0 };
+    case Particle.BRINE:
+      return { temp: DEFAULT_AMBIENT_TEMP, data: 120, flags: 0 };
+    case Particle.SPARK:
+      return { temp: 245, data: 18, flags: 0 };
+    case Particle.BATTERY:
+      return { temp: DEFAULT_AMBIENT_TEMP, data: 255, flags: 0 };
+    case Particle.WIRE:
+      // `flags` is per-cell metadata in state.a; for Wire it encodes an arc cooldown.
+      return { temp: DEFAULT_AMBIENT_TEMP, data: 0, flags: 0 };
     case Particle.MUD:
       return { temp: DEFAULT_AMBIENT_TEMP, data: 200, flags: 0 };
     case Particle.WATER:

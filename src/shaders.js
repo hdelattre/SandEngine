@@ -140,6 +140,12 @@ const uint P_SMOKE = 9u;
 const uint P_STEAM = 10u;
 const uint P_LAVA = 11u;
 const uint P_ACID = 12u;
+const uint P_ICE = 13u;
+const uint P_SALT = 14u;
+const uint P_BRINE = 15u;
+const uint P_WIRE = 16u;
+const uint P_SPARK = 17u;
+const uint P_BATTERY = 18u;
 
 const uint FLAG_IMMOVABLE = 1u << 0u;
 const uint FLAG_POWDER = 1u << 1u;
@@ -154,6 +160,10 @@ const uint T_BOIL = 210u;
 const uint T_CONDENSE = 160u;
 const uint T_LAVA_SOLIDIFY = 150u;
 const uint T_MUD_DRY = 175u;
+const uint T_FREEZE = 105u;
+const uint T_ICE_MELT = 145u;
+const uint T_BRINE_FREEZE = 85u;
+const uint T_BRINE_EVAP = 175u;
 
 bool inBounds(ivec2 c) {
   return c.x >= 0 && c.y >= 0 && c.x < u_size.x && c.y < u_size.y;
@@ -367,6 +377,27 @@ uvec4 selfUpdate(ivec2 c, uvec4 s, uint salt) {
       id = P_STEAM;
       data = 170u;
       temp = temp > 235u ? 235u : temp;
+    } else if (temp <= T_FREEZE) {
+      id = P_ICE;
+      data = 0u;
+      meta = 0u;
+    }
+  } else if (id == P_BRINE) {
+    if (temp >= (T_BOIL + 12u)) {
+      id = P_STEAM;
+      data = 170u;
+      temp = temp > 235u ? 235u : temp;
+      meta = 0u;
+    } else if (temp <= T_BRINE_FREEZE) {
+      id = P_ICE;
+      data = 0u;
+      meta = 0u;
+    }
+  } else if (id == P_ICE) {
+    if (temp >= T_ICE_MELT) {
+      id = P_WATER;
+      data = 0u;
+      meta = 0u;
     }
   } else if (id == P_LAVA) {
     if (temp <= T_LAVA_SOLIDIFY) {
@@ -396,6 +427,17 @@ uvec4 selfUpdate(ivec2 c, uvec4 s, uint salt) {
       id = P_EMPTY;
       temp = u_ambientTemp;
     }
+  } else if (id == P_SPARK) {
+    if (data > 0u) data -= 1u;
+    if (data == 0u) {
+      id = P_EMPTY;
+      temp = u_ambientTemp;
+      meta = 0u;
+    }
+  } else if (id == P_WIRE) {
+    // Wire charge (data) decays, and arc cooldown (meta) counts down.
+    if (data > 0u) data -= 1u;
+    if (meta > 0u) meta -= 1u;
   }
 
   s.r = id;
@@ -468,6 +510,17 @@ void main() {
     bData = min(150u, bData + 2u);
   }
 
+  // Plant stress from salinity.
+  if (aId == P_PLANT && bId == P_BRINE) {
+    aData = aData > 10u ? (aData - 10u) : 0u;
+  } else if (bId == P_PLANT && aId == P_BRINE) {
+    bData = bData > 10u ? (bData - 10u) : 0u;
+  } else if (aId == P_PLANT && bId == P_SALT) {
+    aData = aData > 18u ? (aData - 18u) : 0u;
+  } else if (bId == P_PLANT && aId == P_SALT) {
+    bData = bData > 18u ? (bData - 18u) : 0u;
+  }
+
   // Dirt + water -> mud.
   if (aId == P_DIRT && bId == P_WATER) {
     aId = P_MUD;
@@ -475,15 +528,46 @@ void main() {
   } else if (bId == P_DIRT && aId == P_WATER) {
     bId = P_MUD;
     bData = 200u;
+  } else if (aId == P_DIRT && bId == P_BRINE) {
+    aId = P_MUD;
+    aData = 200u;
+  } else if (bId == P_DIRT && aId == P_BRINE) {
+    bId = P_MUD;
+    bData = 200u;
+  }
+
+  // Salt dissolves into water -> brine (brine.data is salinity).
+  if (aId == P_SALT && bId == P_WATER) {
+    aId = P_EMPTY;
+    aTemp = u_ambientTemp;
+    bId = P_BRINE;
+    bData = bData > 120u ? bData : 120u;
+  } else if (bId == P_SALT && aId == P_WATER) {
+    bId = P_EMPTY;
+    bTemp = u_ambientTemp;
+    aId = P_BRINE;
+    aData = aData > 120u ? aData : 120u;
+  } else if (aId == P_SALT && bId == P_BRINE) {
+    if (bData < 250u) {
+      aId = P_EMPTY;
+      aTemp = u_ambientTemp;
+      bData = min(255u, bData + 40u);
+    }
+  } else if (bId == P_SALT && aId == P_BRINE) {
+    if (aData < 250u) {
+      bId = P_EMPTY;
+      bTemp = u_ambientTemp;
+      aData = min(255u, aData + 40u);
+    }
   }
 
   // Lava + water -> stone + steam.
-  if (aId == P_LAVA && bId == P_WATER) {
+  if (aId == P_LAVA && (bId == P_WATER || bId == P_ICE || bId == P_BRINE)) {
     aId = P_STONE;
     bId = P_STEAM;
     bTemp = bTemp > 230u ? bTemp : 230u;
     bData = 170u;
-  } else if (bId == P_LAVA && aId == P_WATER) {
+  } else if (bId == P_LAVA && (aId == P_WATER || aId == P_ICE || aId == P_BRINE)) {
     bId = P_STONE;
     aId = P_STEAM;
     aTemp = aTemp > 230u ? aTemp : 230u;
@@ -511,17 +595,32 @@ void main() {
   {
     uint r = randByte(uvec2(aC), 101u + u_passSalt);
 
-    // Fire + water: quench.
-    if (aId == P_FIRE && bId == P_WATER) {
+    // Fire + water/brine: quench.
+    if (aId == P_FIRE && (bId == P_WATER || bId == P_BRINE)) {
       aId = P_SMOKE;
       aTemp = aTemp > 185u ? 185u : aTemp;
       aData = 90u;
       bTemp = clampU8(int(bTemp) + 48);
-    } else if (bId == P_FIRE && aId == P_WATER) {
+    } else if (bId == P_FIRE && (aId == P_WATER || aId == P_BRINE)) {
       bId = P_SMOKE;
       bTemp = bTemp > 185u ? 185u : bTemp;
       bData = 90u;
       aTemp = clampU8(int(aTemp) + 48);
+    }
+
+    // Fire + ice: melt + quench.
+    if (aId == P_FIRE && bId == P_ICE) {
+      aId = P_SMOKE;
+      aTemp = aTemp > 185u ? 185u : aTemp;
+      aData = 90u;
+      bId = P_WATER;
+      bTemp = clampU8(int(bTemp) + 70);
+    } else if (bId == P_FIRE && aId == P_ICE) {
+      bId = P_SMOKE;
+      bTemp = bTemp > 185u ? 185u : bTemp;
+      bData = 90u;
+      aId = P_WATER;
+      aTemp = clampU8(int(aTemp) + 70);
     }
 
     // Fire + flammable: ignite with temperature-influenced chance.
@@ -572,6 +671,182 @@ void main() {
           uint cost = hasFlag(aF, FLAG_DISSOLVABLE) ? 10u : 5u;
           bData = bData > cost ? (bData - cost) : 0u;
         }
+      }
+    }
+  }
+
+  // Brine evaporates into steam near air when warm, concentrating and sometimes crystallizing salt.
+  if (u_dir.x == 0 && u_dir.y == -1) {
+    uint r = randByte(uvec2(bC), 171u + u_passSalt);
+    if (aId == P_EMPTY && bId == P_BRINE && bTemp >= T_BRINE_EVAP) {
+      uint chance = 6u + ((bTemp - T_BRINE_EVAP) >> 3); // 6..~16
+      chance = min(chance, 22u);
+      if (r < chance) {
+        uint r2 = randByte(uvec2(bC), 173u + u_passSalt);
+        bool saturated = bData >= 240u;
+
+        aId = P_STEAM;
+        aTemp = (bTemp > 200u) ? bTemp : 200u;
+        aData = saturated ? 120u : 90u;
+        aMeta = 0u;
+
+        if (saturated && r2 < 120u) {
+          bId = P_SALT;
+          bData = 0u;
+          bMeta = 0u;
+        } else {
+          bData = min(255u, bData + 12u);
+          bTemp = clampU8(int(bTemp) - 6); // latent heat
+        }
+      }
+    }
+  }
+
+  // Electricity: wire charge + sparks.
+  {
+    uint rA = randByte(uvec2(aC), 181u + u_passSalt);
+    uint rB = randByte(uvec2(bC), 183u + u_passSalt);
+    bool orth = (u_dir.x == 0 || u_dir.y == 0);
+
+    // Battery charges adjacent wire.
+    if (orth && aId == P_BATTERY && bId == P_WIRE) {
+      bData = max(bData, 220u);
+    } else if (orth && bId == P_BATTERY && aId == P_WIRE) {
+      aData = max(aData, 220u);
+    }
+
+    // Wire-wire charge propagation.
+    if (orth && aId == P_WIRE && bId == P_WIRE) {
+      int diff = int(aData) - int(bData);
+      int transfer = diff / 4;
+      if (transfer != 0) {
+        aData = clampU8(int(aData) - transfer);
+        bData = clampU8(int(bData) + transfer);
+      }
+    }
+
+    // Spark charges wire.
+    if (aId == P_WIRE && bId == P_SPARK) {
+      aData = min(255u, aData + 120u);
+      bId = P_EMPTY;
+      bTemp = u_ambientTemp;
+      bData = 0u;
+      bMeta = 0u;
+      aMeta = max(aMeta, 2u);
+    } else if (bId == P_WIRE && aId == P_SPARK) {
+      bData = min(255u, bData + 120u);
+      aId = P_EMPTY;
+      aTemp = u_ambientTemp;
+      aData = 0u;
+      aMeta = 0u;
+      bMeta = max(bMeta, 2u);
+    }
+
+    // Charged wire arcs into air, spawning spark (wire.meta is a cooldown).
+    if (orth && aId == P_WIRE && bId == P_EMPTY && aData >= 180u && aMeta == 0u) {
+      uint chance = 6u + ((aData - 180u) >> 3); // 6..~15
+      if (rA < chance) {
+        bId = P_SPARK;
+        bTemp = aTemp > T_FIRE ? aTemp : T_FIRE;
+        bData = 18u;
+        bMeta = 0u;
+        aData = aData > 50u ? (aData - 50u) : 0u;
+        aMeta = 10u;
+      }
+    } else if (orth && bId == P_WIRE && aId == P_EMPTY && bData >= 180u && bMeta == 0u) {
+      uint chance = 6u + ((bData - 180u) >> 3); // 6..~15
+      if (rB < chance) {
+        aId = P_SPARK;
+        aTemp = bTemp > T_FIRE ? bTemp : T_FIRE;
+        aData = 18u;
+        aMeta = 0u;
+        bData = bData > 50u ? (bData - 50u) : 0u;
+        bMeta = 10u;
+      }
+    }
+
+    // Charged wire heats nearby water/brine (simple shock heating).
+    if (orth && aId == P_WIRE && (bId == P_WATER || bId == P_BRINE) && aData >= 120u) {
+      uint heat = 6u + (aData >> 5u); // 6..13
+      bTemp = clampU8(int(bTemp) + int(heat));
+      aData = aData > 8u ? (aData - 8u) : 0u;
+    } else if (orth && bId == P_WIRE && (aId == P_WATER || aId == P_BRINE) && bData >= 120u) {
+      uint heat = 6u + (bData >> 5u); // 6..13
+      aTemp = clampU8(int(aTemp) + int(heat));
+      bData = bData > 8u ? (bData - 8u) : 0u;
+    }
+
+    // Wire can ignite flammables when highly charged.
+    if (aId == P_WIRE && hasFlag(bF, FLAG_FLAMMABLE) && aData >= 210u) {
+      uint chance = 12u + ((aData - 210u) >> 2); // 12..23
+      if (rA < chance) {
+        bId = P_FIRE;
+        bTemp = bTemp > T_FIRE ? bTemp : T_FIRE;
+        bData = 45u;
+        aData = aData > 80u ? (aData - 80u) : 0u;
+        aMeta = 12u;
+      }
+    } else if (bId == P_WIRE && hasFlag(aF, FLAG_FLAMMABLE) && bData >= 210u) {
+      uint chance = 12u + ((bData - 210u) >> 2); // 12..23
+      if (rB < chance) {
+        aId = P_FIRE;
+        aTemp = aTemp > T_FIRE ? aTemp : T_FIRE;
+        aData = 45u;
+        bData = bData > 80u ? (bData - 80u) : 0u;
+        bMeta = 12u;
+      }
+    }
+
+    // Spark fizzles in liquids/ice and can ignite flammables.
+    if (aId == P_SPARK && (bId == P_WATER || bId == P_BRINE)) {
+      aId = P_EMPTY;
+      aTemp = u_ambientTemp;
+      aData = 0u;
+      aMeta = 0u;
+      bTemp = clampU8(int(bTemp) + 24);
+    } else if (bId == P_SPARK && (aId == P_WATER || aId == P_BRINE)) {
+      bId = P_EMPTY;
+      bTemp = u_ambientTemp;
+      bData = 0u;
+      bMeta = 0u;
+      aTemp = clampU8(int(aTemp) + 24);
+    } else if (aId == P_SPARK && bId == P_ICE) {
+      aId = P_EMPTY;
+      aTemp = u_ambientTemp;
+      aData = 0u;
+      aMeta = 0u;
+      bId = P_WATER;
+      bTemp = clampU8(int(bTemp) + 32);
+      bData = 0u;
+      bMeta = 0u;
+    } else if (bId == P_SPARK && aId == P_ICE) {
+      bId = P_EMPTY;
+      bTemp = u_ambientTemp;
+      bData = 0u;
+      bMeta = 0u;
+      aId = P_WATER;
+      aTemp = clampU8(int(aTemp) + 32);
+      aData = 0u;
+      aMeta = 0u;
+    } else if (aId == P_SPARK && hasFlag(bF, FLAG_FLAMMABLE)) {
+      if (rA < 90u) {
+        bId = P_FIRE;
+        bTemp = bTemp > T_FIRE ? bTemp : T_FIRE;
+        bData = 40u;
+        aId = P_EMPTY;
+        aTemp = u_ambientTemp;
+        aData = 0u;
+        aMeta = 0u;
+      }
+    } else if (bId == P_SPARK && hasFlag(aF, FLAG_FLAMMABLE)) {
+      if (rB < 90u) {
+        aId = P_FIRE;
+        aTemp = aTemp > T_FIRE ? aTemp : T_FIRE;
+        aData = 40u;
+        bId = P_EMPTY;
+        bTemp = u_ambientTemp;
+        bData = 0u;
+        bMeta = 0u;
       }
     }
   }
@@ -792,21 +1067,17 @@ const uint P_DIRT = 4u;
 const uint P_MUD = 5u;
 const uint P_OIL = 6u;
 const uint P_PLANT = 7u;
+const uint P_FIRE = 8u;
+const uint P_SMOKE = 9u;
+const uint P_STEAM = 10u;
 const uint P_LAVA = 11u;
 const uint P_ACID = 12u;
-
-const int CAND_COUNT = 9;
-const int CANDS[CAND_COUNT] = int[CAND_COUNT](
-  int(P_SAND),
-  int(P_WATER),
-  int(P_STONE),
-  int(P_DIRT),
-  int(P_MUD),
-  int(P_OIL),
-  int(P_PLANT),
-  int(P_LAVA),
-  int(P_ACID)
-);
+const uint P_ICE = 13u;
+const uint P_SALT = 14u;
+const uint P_BRINE = 15u;
+const uint P_WIRE = 16u;
+const uint P_SPARK = 17u;
+const uint P_BATTERY = 18u;
 
 uvec4 loadState(ivec2 c) {
   return texelFetch(u_state, c, 0);
@@ -815,10 +1086,19 @@ uvec4 loadState(ivec2 c) {
 uvec4 makeCell(uint id) {
   uint temp = u_ambientTemp;
   uint data = 0u;
+  uint meta = 0u;
   if (id == P_MUD) data = 200u;
   else if (id == P_ACID) data = 180u;
   else if (id == P_LAVA) temp = 250u;
-  return uvec4(id, temp, data, 0u);
+  else if (id == P_FIRE) { temp = 245u; data = 50u; }
+  else if (id == P_SMOKE) { temp = 170u; data = 140u; }
+  else if (id == P_STEAM) { temp = 205u; data = 170u; }
+  else if (id == P_PLANT) { data = 120u; meta = 32u; }
+  else if (id == P_ICE) { temp = 90u; }
+  else if (id == P_BRINE) { data = 120u; }
+  else if (id == P_SPARK) { temp = 245u; data = 18u; }
+  else if (id == P_BATTERY) { data = 255u; }
+  return uvec4(id, temp, data, meta);
 }
 
 float colorDist(vec3 a, vec3 b) {
@@ -829,9 +1109,10 @@ float colorDist(vec3 a, vec3 b) {
 uint mapColor(vec3 rgb) {
   float best = 1e9;
   uint bestId = P_STONE;
-  for (int i = 0; i < CAND_COUNT; i++) {
-    int id = CANDS[i];
+  for (int id = 0; id < 256; id++) {
     vec3 pc = texelFetch(u_palette, ivec2(id, 0), 0).rgb;
+    // Skip placeholder magenta entries (undefined particles).
+    if (pc.r > 0.99 && pc.g < 0.01 && pc.b > 0.99) continue;
     float d = colorDist(rgb, pc);
     if (d < best) {
       best = d;

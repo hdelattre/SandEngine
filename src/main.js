@@ -355,10 +355,15 @@ window.addEventListener("keydown", (e) => {
     "0": Particle.STEAM,
     "-": Particle.LAVA,
     "=": Particle.ACID,
+    i: Particle.ICE,
+    s: Particle.SALT,
+    b: Particle.BRINE,
+    w: Particle.WIRE,
+    e: Particle.SPARK,
+    v: Particle.BATTERY,
   };
-  if (e.key in hotkeys) {
-    particleSelect.value = String(hotkeys[e.key]);
-  }
+  const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  if (k in hotkeys) particleSelect.value = String(hotkeys[k]);
 });
 
 function loop(now) {
