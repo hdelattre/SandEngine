@@ -31,6 +31,10 @@
  * @property {number} flags
  *
  * `temp`, `data`, `flags` are bytes in the range 0..255.
+ *
+ * Note: `flags` here is *per-cell metadata* stored in the world texture's A channel.
+ * It's distinct from `ParticleDef.flags` (per-particle physical category flags).
+ * V1 uses `flags` primarily for Plant growth (direction/gene/cooldown bitpacking).
  */
 
 /**
@@ -77,4 +81,3 @@
  */
 
 export {};
-
