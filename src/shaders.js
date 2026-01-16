@@ -1046,10 +1046,22 @@ uniform int u_radius;
 uniform uvec4 u_paint;
 uniform uint u_seed;
 uniform uint u_tick;
+uniform int u_addMode;
 
 layout(location = 0) out uvec4 outState;
 
+const uint P_EMPTY = 0u;
+const uint P_WATER = 2u;
+const uint P_DIRT = 4u;
+const uint P_MUD = 5u;
+const uint P_OIL = 6u;
 const uint P_PLANT = 7u;
+const uint P_FIRE = 8u;
+const uint P_SMOKE = 9u;
+const uint P_SALT = 14u;
+const uint P_BRINE = 15u;
+const uint P_WIRE = 16u;
+const uint P_SPARK = 17u;
 
 uint hashU32(uint x) {
   x ^= x >> 16;
@@ -1083,6 +1095,44 @@ void main() {
 
   if (dist2 <= r2) {
     uvec4 s = u_paint;
+
+    if (u_addMode != 0 && s.r != P_EMPTY) {
+      uint curId = cur.r;
+      if (curId != P_EMPTY) {
+        bool changed = false;
+        uvec4 nextCell = cur;
+
+        // Meaningful single-cell interactions for "add" mode.
+        if (s.r == P_FIRE && (curId == P_PLANT || curId == P_OIL)) {
+          nextCell = uvec4(P_FIRE, max(cur.g, 245u), 55u, 0u);
+          changed = true;
+        } else if (s.r == P_WATER && curId == P_DIRT) {
+          nextCell = uvec4(P_MUD, (cur.g + s.g) >> 1, 200u, 0u);
+          changed = true;
+        } else if (s.r == P_WATER && curId == P_FIRE) {
+          nextCell = uvec4(P_SMOKE, min(cur.g, 185u), 90u, 0u);
+          changed = true;
+        } else if (s.r == P_SALT && curId == P_WATER) {
+          nextCell = uvec4(P_BRINE, (cur.g + s.g) >> 1, 120u, 0u);
+          changed = true;
+        } else if (s.r == P_SPARK && curId == P_WIRE) {
+          nextCell.b = min(255u, nextCell.b + 120u);
+          nextCell.a = max(nextCell.a, 2u);
+          changed = true;
+        } else if (s.r == P_PLANT && (curId == P_DIRT || curId == P_MUD)) {
+          nextCell = s;
+          nextCell.g = (cur.g + s.g) >> 1;
+          if (nextCell.b < 120u) nextCell.b = 120u;
+          changed = true;
+        }
+
+        if (!changed) {
+          outState = cur;
+          return;
+        }
+        s = nextCell;
+      }
+    }
 
     // Plant gets per-cell randomized growth metadata so it grows in branching patterns.
     if (s.r == P_PLANT) {
@@ -1125,6 +1175,7 @@ uniform ivec2 u_imgSize;
 uniform ivec2 u_origin;
 uniform uint u_ambientTemp;
 uniform int u_edgeStone;
+uniform int u_addMode;
 
 layout(location = 0) out uvec4 outState;
 
@@ -1222,13 +1273,15 @@ void main() {
 
   // Near-white backgrounds become air (common for pasted images).
   if (lum > 0.97 && sat < 0.08) {
-    outState = makeCell(P_EMPTY);
+    if (u_addMode != 0) outState = cur;
+    else outState = makeCell(P_EMPTY);
     return;
   }
 
   // Very dark, low-saturation pixels become stone (useful for outlines).
   if (lum < 0.05 && sat < 0.25) {
-    outState = makeCell(P_STONE);
+    if (u_addMode != 0 && cur.r != P_EMPTY) outState = cur;
+    else outState = makeCell(P_STONE);
     return;
   }
 
@@ -1264,13 +1317,20 @@ void main() {
     float avg = (lumL + lumR + lumD + lumU) * 0.25;
     // Only stamp on the "darker" side of an edge so outlines stay ~1px thick.
     if (e > 0.22 && (lum + 0.025) < avg) {
-      outState = makeCell(P_STONE);
+      if (u_addMode != 0 && cur.r != P_EMPTY) outState = cur;
+      else outState = makeCell(P_STONE);
       return;
     }
   }
 
   uint id = mapColor(px.rgb);
-  outState = makeCell(id);
+  if (u_addMode != 0) {
+    if (id == P_EMPTY) outState = cur;
+    else if (cur.r != P_EMPTY) outState = cur;
+    else outState = makeCell(id);
+  } else {
+    outState = makeCell(id);
+  }
 }
 `;
 

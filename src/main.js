@@ -38,6 +38,7 @@ const stepsPerFrame = /** @type {HTMLInputElement} */ (document.getElementById("
 const viewSelect = /** @type {HTMLSelectElement} */ (document.getElementById("viewSelect"));
 const resSelect = /** @type {HTMLSelectElement} */ (document.getElementById("resSelect"));
 const pasteEdgeStone = /** @type {HTMLInputElement} */ (document.getElementById("pasteEdgeStone"));
+const addMode = /** @type {HTMLInputElement} */ (document.getElementById("addMode"));
 const levelHintEl = /** @type {HTMLElement} */ (document.getElementById("levelHint"));
 const helpModal = /** @type {HTMLDivElement} */ (document.getElementById("helpModal"));
 const helpBackdrop = /** @type {HTMLDivElement} */ (document.getElementById("helpBackdrop"));
@@ -161,7 +162,9 @@ function paintAt(x, y, mode) {
   }
 
   const base = defaultCellForParticle(/** @type {any} */ (id));
-  sim.paintCircle(x, y, { id, temp: base.temp, data: base.data, flags: base.flags }, radius);
+  const isErase = id === Particle.EMPTY;
+  const doAdd = !isErase && addMode.checked;
+  sim.paintCircle(x, y, { id, temp: base.temp, data: base.data, flags: base.flags }, radius, { addMode: doAdd });
 }
 
 canvas.addEventListener("pointerdown", (e) => {
@@ -313,7 +316,7 @@ function setActiveLevel(levelId) {
   sim.seed = next.seed >>> 0;
 
   const { source, width, height, originX, originY } = next.buildStamp();
-  sim.stampImage(source, width, height, originX, originY, { edgeStone: false });
+  sim.stampImage(source, width, height, originX, originY, { edgeStone: false, addMode: false });
 
   particleSelect.value = String(next.allowedPaintIds[0] ?? Particle.STONE);
   toast(`${next.name}`, 1400);
@@ -422,7 +425,7 @@ window.addEventListener("paste", async (e) => {
     oy = clamp(oy, 1, sim.height - h);
 
     // @ts-ignore - OffscreenCanvas is a valid CanvasImageSource at runtime.
-    sim.stampImage(offscreen, w, h, ox, oy, { edgeStone: pasteEdgeStone.checked });
+    sim.stampImage(offscreen, w, h, ox, oy, { edgeStone: pasteEdgeStone.checked, addMode: addMode.checked });
     toast(`pasted ${srcW}×${srcH} → ${w}×${h}`, 2600);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -444,6 +447,13 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "?" || e.key === "h" || e.key === "H") {
     e.preventDefault();
     openHelp();
+    return;
+  }
+
+  if (e.key === "a" || e.key === "A") {
+    e.preventDefault();
+    addMode.checked = !addMode.checked;
+    toast(addMode.checked ? "add mode: on" : "add mode: off", 1200);
     return;
   }
 

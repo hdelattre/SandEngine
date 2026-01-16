@@ -150,6 +150,7 @@ export class GpuSim {
         center: mustGetUniform(gl, program, "u_center"),
         radius: mustGetUniform(gl, program, "u_radius"),
         paint: mustGetUniform(gl, program, "u_paint"),
+        addMode: mustGetUniform(gl, program, "u_addMode"),
         seed: mustGetUniform(gl, program, "u_seed"),
         tick: mustGetUniform(gl, program, "u_tick"),
       },
@@ -173,6 +174,7 @@ export class GpuSim {
         origin: mustGetUniform(gl, program, "u_origin"),
         ambientTemp: mustGetUniform(gl, program, "u_ambientTemp"),
         edgeStone: mustGetUniform(gl, program, "u_edgeStone"),
+        addMode: mustGetUniform(gl, program, "u_addMode"),
       },
     };
   }
@@ -389,18 +391,21 @@ export class GpuSim {
    * @param {number} y
    * @param {{id: number, temp: number, data: number, flags: number}} cell
    * @param {number} radius
+   * @param {{addMode?: boolean} | undefined} [opts]
    */
-  paintCircle(x, y, cell, radius) {
+  paintCircle(x, y, cell, radius, opts) {
     if (x < 0 || y < 0 || x >= this.width || y >= this.height) return;
 
     const gl = this.gl;
     const { program, u } = this._paint;
+    const addMode = opts?.addMode ?? false;
 
     gl.useProgram(program);
     gl.uniform2i(u.size, this.width, this.height);
     gl.uniform2i(u.center, x | 0, y | 0);
     gl.uniform1i(u.radius, radius | 0);
     gl.uniform4ui(u.paint, cell.id >>> 0, clampByte(cell.temp) >>> 0, clampByte(cell.data) >>> 0, clampByte(cell.flags) >>> 0);
+    gl.uniform1i(u.addMode, addMode ? 1 : 0);
     gl.uniform1ui(u.seed, this.seed >>> 0);
     gl.uniform1ui(u.tick, this.tick >>> 0);
 
@@ -421,11 +426,12 @@ export class GpuSim {
    * @param {number} imgHeight
    * @param {number} originX
    * @param {number} originY
-   * @param {{edgeStone?: boolean} | undefined} [opts]
+   * @param {{edgeStone?: boolean, addMode?: boolean} | undefined} [opts]
    */
   stampImage(image, imgWidth, imgHeight, originX, originY, opts) {
     const gl = this.gl;
     const edgeStone = opts?.edgeStone ?? true;
+    const addMode = opts?.addMode ?? false;
 
     this._imgSize.width = imgWidth | 0;
     this._imgSize.height = imgHeight | 0;
@@ -444,6 +450,7 @@ export class GpuSim {
     gl.uniform2i(u.origin, originX | 0, originY | 0);
     gl.uniform1ui(u.ambientTemp, this.ambientTemp >>> 0);
     gl.uniform1i(u.edgeStone, edgeStone ? 1 : 0);
+    gl.uniform1i(u.addMode, addMode ? 1 : 0);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this._srcTex());
