@@ -44,6 +44,11 @@ const helpModal = /** @type {HTMLDivElement} */ (document.getElementById("helpMo
 const helpBackdrop = /** @type {HTMLDivElement} */ (document.getElementById("helpBackdrop"));
 const helpCloseBtn = /** @type {HTMLButtonElement} */ (document.getElementById("helpCloseBtn"));
 const helpBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById("helpBtn"));
+const settingsBtn = /** @type {HTMLButtonElement} */ (document.getElementById("settingsBtn"));
+const settingsPanel = /** @type {HTMLDivElement} */ (document.getElementById("settingsPanel"));
+const brushSizeValue = /** @type {HTMLOutputElement | null} */ (document.getElementById("brushSizeValue"));
+const stepsPerFrameValue = /** @type {HTMLOutputElement | null} */ (document.getElementById("stepsPerFrameValue"));
+const topbar = /** @type {HTMLElement | null} */ (document.querySelector("header.topbar"));
 
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
@@ -238,6 +243,48 @@ resSelect.addEventListener("change", () => {
 levelSelect.addEventListener("change", () => {
   setActiveLevel(levelSelect.value);
 });
+
+/**
+ * @param {boolean} open
+ */
+function setSettingsOpen(open) {
+  settingsPanel.hidden = !open;
+  settingsBtn.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+settingsBtn.addEventListener("click", () => {
+  setSettingsOpen(settingsPanel.hidden);
+});
+
+setSettingsOpen(false);
+
+window.addEventListener(
+  "pointerdown",
+  (e) => {
+    if (settingsPanel.hidden) return;
+    const t = e.target;
+    if (!(t instanceof Node)) return;
+    if (settingsBtn.contains(t) || settingsPanel.contains(t)) return;
+    setSettingsOpen(false);
+
+    // If you tapped the canvas while the menu was open, treat it as a "close menu"
+    // gesture instead of also drawing a particle stroke.
+    if (!topbar?.contains(t)) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    }
+  },
+  { capture: true },
+);
+
+function syncRangeReadouts() {
+  if (brushSizeValue) brushSizeValue.textContent = brushSize.value;
+  if (stepsPerFrameValue) stepsPerFrameValue.textContent = stepsPerFrame.value;
+}
+
+brushSize.addEventListener("input", syncRangeReadouts);
+stepsPerFrame.addEventListener("input", syncRangeReadouts);
+syncRangeReadouts();
 
 function openHelp() {
   helpModal.hidden = false;
@@ -444,6 +491,13 @@ window.addEventListener("keydown", (e) => {
     return;
   }
 
+  if (!settingsPanel.hidden && e.key === "Escape") {
+    e.preventDefault();
+    setSettingsOpen(false);
+    settingsBtn.focus();
+    return;
+  }
+
   if (e.key === "?" || e.key === "h" || e.key === "H") {
     e.preventDefault();
     openHelp();
@@ -561,7 +615,9 @@ function loop(now) {
     const lvl = activeLevel.id === LEVEL_ID.SANDBOX ? "" : ` • ${activeLevel.name}`;
     const budget = remainingBudget === null ? "" : ` • stone ${remainingBudget}`;
     const done = levelComplete ? " • complete" : "";
-    setText(statusEl, `${sim.width}×${sim.height}${lvl}${budget}${done} • tick ${sim.tick} • ${fps.toFixed(0)} fps${msg}`);
+    const statusText = `${sim.width}×${sim.height}${lvl}${budget}${done} • tick ${sim.tick} • ${fps.toFixed(0)} fps${msg}`;
+    setText(statusEl, statusText);
+    statusEl.title = statusText;
   }
 
   requestAnimationFrame(loop);
