@@ -126,6 +126,12 @@ body {
   overflow: auto;
 }
 
+.panelHints {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in oklab, var(--border), transparent 25%);
+}
+
 .panelGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -391,60 +397,6 @@ input[type="range"]:focus-visible,
   height: 100%;
   display: block;
   pointer-events: none;
-}
-
-.modal {
-  position: fixed;
-  inset: 0;
-  z-index: 30;
-  display: grid;
-  place-items: center;
-}
-
-.modal[hidden] {
-  display: none;
-}
-
-.modal__backdrop {
-  position: absolute;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.55);
-}
-
-.modal__panel {
-  position: relative;
-  width: min(560px, calc(100vw - 24px));
-  max-height: min(80vh, 780px);
-  overflow: auto;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: color-mix(in oklab, var(--panel), black 12%);
-  box-shadow:
-    0 24px 60px rgba(0, 0, 0, 0.55),
-    0 0 0 1px rgba(255, 255, 255, 0.03) inset;
-}
-
-.modal__header {
-  position: sticky;
-  top: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
-  background: color-mix(in oklab, var(--panel), black 18%);
-  border-bottom: 1px solid var(--border);
-}
-
-.modal__title {
-  font-weight: 700;
-  color: var(--text);
-}
-
-.modal__body {
-  padding: 10px 12px 12px;
-  color: var(--muted);
-  user-select: none;
 }
 
 .hint__small {

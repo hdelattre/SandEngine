@@ -41,10 +41,6 @@ const pasteEdgeStone = /** @type {HTMLInputElement} */ (document.getElementById(
 const pasteBtn = /** @type {HTMLButtonElement} */ (document.getElementById("pasteBtn"));
 const addMode = /** @type {HTMLInputElement} */ (document.getElementById("addMode"));
 const levelHintEl = /** @type {HTMLElement} */ (document.getElementById("levelHint"));
-const helpModal = /** @type {HTMLDivElement} */ (document.getElementById("helpModal"));
-const helpBackdrop = /** @type {HTMLDivElement} */ (document.getElementById("helpBackdrop"));
-const helpCloseBtn = /** @type {HTMLButtonElement} */ (document.getElementById("helpCloseBtn"));
-const helpBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById("helpBtn"));
 const settingsBtn = /** @type {HTMLButtonElement} */ (document.getElementById("settingsBtn"));
 const settingsPanel = /** @type {HTMLDivElement} */ (document.getElementById("settingsPanel"));
 const brushSizeValue = /** @type {HTMLOutputElement | null} */ (document.getElementById("brushSizeValue"));
@@ -286,23 +282,6 @@ function syncRangeReadouts() {
 brushSize.addEventListener("input", syncRangeReadouts);
 stepsPerFrame.addEventListener("input", syncRangeReadouts);
 syncRangeReadouts();
-
-function openHelp() {
-  helpModal.hidden = false;
-  helpCloseBtn.focus();
-}
-
-function closeHelp() {
-  helpModal.hidden = true;
-  helpBtn?.focus();
-}
-
-helpBtn?.addEventListener("click", () => {
-  if (helpModal.hidden) openHelp();
-  else closeHelp();
-});
-helpCloseBtn.addEventListener("click", closeHelp);
-helpBackdrop.addEventListener("click", closeHelp);
 
 let lastNow = performance.now();
 let fps = 60;
@@ -574,24 +553,10 @@ window.addEventListener("paste", async (e) => {
 window.addEventListener("keydown", (e) => {
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement) return;
 
-  if (!helpModal.hidden) {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      closeHelp();
-    }
-    return;
-  }
-
   if (!settingsPanel.hidden && e.key === "Escape") {
     e.preventDefault();
     setSettingsOpen(false);
     settingsBtn.focus();
-    return;
-  }
-
-  if (e.key === "?" || e.key === "h" || e.key === "H") {
-    e.preventDefault();
-    openHelp();
     return;
   }
 
