@@ -122,6 +122,7 @@ export function createFramebufferForTexture(gl, tex) {
   if (!fb) throw new Error("createFramebuffer failed");
   gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+  gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
   const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
   if (status !== gl.FRAMEBUFFER_COMPLETE) {
     gl.deleteFramebuffer(fb);
@@ -130,3 +131,31 @@ export function createFramebufferForTexture(gl, tex) {
   return fb;
 }
 
+/**
+ * Creates a framebuffer with multiple color attachments (COLOR_ATTACHMENT0..N).
+ * @param {WebGL2RenderingContext} gl
+ * @param {WebGLTexture[]} textures
+ * @returns {WebGLFramebuffer}
+ */
+export function createFramebufferForTextures(gl, textures) {
+  const fb = gl.createFramebuffer();
+  if (!fb) throw new Error("createFramebuffer failed");
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+
+  /** @type {number[]} */
+  const bufs = [];
+  for (let i = 0; i < textures.length; i++) {
+    const tex = textures[i];
+    const attachment = gl.COLOR_ATTACHMENT0 + i;
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, attachment, gl.TEXTURE_2D, tex, 0);
+    bufs.push(attachment);
+  }
+  gl.drawBuffers(bufs);
+
+  const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+  if (status !== gl.FRAMEBUFFER_COMPLETE) {
+    gl.deleteFramebuffer(fb);
+    throw new Error(`incomplete framebuffer: ${status}`);
+  }
+  return fb;
+}

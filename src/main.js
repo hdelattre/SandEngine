@@ -1,7 +1,17 @@
 // @ts-check
 
 import { GpuSim } from "./gpu-sim.js";
-import { buildPaletteTexels, buildPropTexels, createParticleDefs, defaultCellForParticle, Particle } from "./particles.js";
+import {
+  buildLatentTexels,
+  buildPaletteTexels,
+  buildPropTexels,
+  buildThermal0Texels,
+  buildThermal1Texels,
+  createParticleDefs,
+  createThermalDefs,
+  defaultCellForParticle,
+  Particle,
+} from "./particles.js";
 import { createLevels, LEVEL_ID } from "./levels.js";
 
 /** @typedef {import('./types.js').ViewMode} ViewMode */
@@ -74,6 +84,10 @@ particleSelect.value = String(Particle.SAND);
 
 const paletteTexels = buildPaletteTexels(particleDefs);
 const propTexels = buildPropTexels(particleDefs);
+const thermalDefs = createThermalDefs();
+const thermal0Texels = buildThermal0Texels(thermalDefs);
+const thermal1Texels = buildThermal1Texels(thermalDefs);
+const latentTexels = buildLatentTexels(thermalDefs);
 
 const levels = createLevels(particleDefs);
 for (const lvl of levels) {
@@ -90,7 +104,11 @@ let sim = null;
 
 try {
   const { width, height } = parseRes(resSelect.value);
-  sim = new GpuSim(canvas, particleDefs, paletteTexels, propTexels, { width, height, seed: (Math.random() * 2 ** 32) >>> 0 });
+  sim = new GpuSim(canvas, particleDefs, paletteTexels, propTexels, thermal0Texels, thermal1Texels, latentTexels, {
+    width,
+    height,
+    seed: (Math.random() * 2 ** 32) >>> 0,
+  });
   setText(hintStatusEl, "WebGL2 ✓");
 } catch (err) {
   const msg = err instanceof Error ? err.message : String(err);

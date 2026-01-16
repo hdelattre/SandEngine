@@ -308,3 +308,138 @@ export function defaultCellForParticle(id) {
       return { temp: DEFAULT_AMBIENT_TEMP, data: 0, flags: 0 };
   }
 }
+
+/**
+ * Thermal defs drive energy-based temperature + phase changes. The shader treats each
+ * particle id as part of a (solid, liquid, gas) phase group with shared thresholds.
+ *
+ * Energy units are arbitrary but consistent:
+ * - sensible heat: `E += heatCapacity * dTemp`
+ * - latent heat: `E += latentFusion` / `latentVaporization`
+ *
+ * @typedef {object} ThermalDef
+ * @property {number} heatCapacity 1..255
+ * @property {number} meltTemp 0..255
+ * @property {number} boilTemp 0..255
+ * @property {ParticleId} solidId
+ * @property {ParticleId} liquidId
+ * @property {ParticleId} gasId
+ * @property {number} latentFusion 0..65535
+ * @property {number} latentVaporization 0..65535
+ */
+
+/**
+ * @returns {ThermalDef[]}
+ */
+export function createThermalDefs() {
+  /** @type {ThermalDef[]} */
+  const defs = Array.from({ length: 256 }, (_, i) => ({
+    heatCapacity: 16,
+    meltTemp: 0,
+    boilTemp: 255,
+    solidId: /** @type {ParticleId} */ (i),
+    liquidId: /** @type {ParticleId} */ (i),
+    gasId: /** @type {ParticleId} */ (i),
+    latentFusion: 0,
+    latentVaporization: 0,
+  }));
+
+  // Air: low heat capacity so it changes temperature quickly.
+  defs[Particle.EMPTY].heatCapacity = 8;
+
+  // Water group: ICE <-> WATER <-> STEAM.
+  const meltTemp = 125;
+  const boilTemp = 210;
+  const heatCapacity = 40;
+  const latentFusion = 2600;
+  const latentVaporization = 14000;
+  for (const id of [Particle.ICE, Particle.WATER, Particle.STEAM]) {
+    defs[id] = {
+      heatCapacity,
+      meltTemp,
+      boilTemp,
+      solidId: Particle.ICE,
+      liquidId: Particle.WATER,
+      gasId: Particle.STEAM,
+      latentFusion,
+      latentVaporization,
+    };
+  }
+
+  // Lava: high heat capacity, but keep it single-phase for now (crusting remains special-cased).
+  defs[Particle.LAVA].heatCapacity = 30;
+
+  // Stone is a decent heat reservoir.
+  defs[Particle.STONE].heatCapacity = 28;
+
+  return defs;
+}
+
+/**
+ * RGBA8UI thermal texture #0:
+ * - R: heatCapacity
+ * - G: meltTemp
+ * - B: boilTemp
+ * - A: unused
+ *
+ * @param {ThermalDef[]} defs
+ * @returns {Uint8Array}
+ */
+export function buildThermal0Texels(defs) {
+  const texels = new Uint8Array(256 * 4);
+  for (let i = 0; i < 256; i++) {
+    const def = defs[i];
+    const idx = i * 4;
+    texels[idx + 0] = clampByte(def.heatCapacity);
+    texels[idx + 1] = clampByte(def.meltTemp);
+    texels[idx + 2] = clampByte(def.boilTemp);
+    texels[idx + 3] = 0;
+  }
+  return texels;
+}
+
+/**
+ * RGBA8UI thermal texture #1:
+ * - R: solidId
+ * - G: liquidId
+ * - B: gasId
+ * - A: unused
+ *
+ * @param {ThermalDef[]} defs
+ * @returns {Uint8Array}
+ */
+export function buildThermal1Texels(defs) {
+  const texels = new Uint8Array(256 * 4);
+  for (let i = 0; i < 256; i++) {
+    const def = defs[i];
+    const idx = i * 4;
+    texels[idx + 0] = clampByte(def.solidId);
+    texels[idx + 1] = clampByte(def.liquidId);
+    texels[idx + 2] = clampByte(def.gasId);
+    texels[idx + 3] = 0;
+  }
+  return texels;
+}
+
+/**
+ * RGBA8UI latent heat texture:
+ * - R,G: latentFusion (u16 little-endian)
+ * - B,A: latentVaporization (u16 little-endian)
+ *
+ * @param {ThermalDef[]} defs
+ * @returns {Uint8Array}
+ */
+export function buildLatentTexels(defs) {
+  const texels = new Uint8Array(256 * 4);
+  for (let i = 0; i < 256; i++) {
+    const def = defs[i];
+    const lf = def.latentFusion | 0;
+    const lv = def.latentVaporization | 0;
+    const idx = i * 4;
+    texels[idx + 0] = lf & 255;
+    texels[idx + 1] = (lf >> 8) & 255;
+    texels[idx + 2] = lv & 255;
+    texels[idx + 3] = (lv >> 8) & 255;
+  }
+  return texels;
+}

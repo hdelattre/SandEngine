@@ -3,7 +3,7 @@
 import { DEFAULT_AMBIENT_TEMP } from "./particles.js";
 import { CLEAR_FRAG, FULLSCREEN_VERT, HEAT_FRAG, MATTER_FRAG, PAINT_FRAG, RENDER_FRAG, STAMP_FRAG } from "./shaders.js";
 import {
-  createFramebufferForTexture,
+  createFramebufferForTextures,
   createFullscreenVao,
   createProgram,
   createRgba8Texture,
@@ -29,9 +29,12 @@ export class GpuSim {
    * @param {ParticleDef[]} particleDefs
    * @param {Uint8Array} paletteTexels
    * @param {Uint8Array} propTexels
+   * @param {Uint8Array} thermal0Texels
+   * @param {Uint8Array} thermal1Texels
+   * @param {Uint8Array} latentTexels
    * @param {GpuSimOptions} opts
    */
-  constructor(canvas, particleDefs, paletteTexels, propTexels, opts) {
+  constructor(canvas, particleDefs, paletteTexels, propTexels, thermal0Texels, thermal1Texels, latentTexels, opts) {
     /** @type {WebGL2RenderingContext | null} */
     const gl = canvas.getContext("webgl2", { alpha: false, antialias: false, depth: false, stencil: false, preserveDrawingBuffer: false });
     if (!gl) throw new Error("WebGL2 unavailable");
@@ -57,6 +60,9 @@ export class GpuSim {
     // Constant textures.
     this._paletteTex = createRgba8Texture(gl, { width: 256, height: 1, data: paletteTexels });
     this._propTex = createRgba8uiTexture(gl, { width: 256, height: 1, data: propTexels });
+    this._thermal0Tex = createRgba8uiTexture(gl, { width: 256, height: 1, data: thermal0Texels });
+    this._thermal1Tex = createRgba8uiTexture(gl, { width: 256, height: 1, data: thermal1Texels });
+    this._latentTex = createRgba8uiTexture(gl, { width: 256, height: 1, data: latentTexels });
 
     this._imgTex = gl.createTexture();
     if (!this._imgTex) throw new Error("createTexture failed");
@@ -68,7 +74,8 @@ export class GpuSim {
     this._imgSize = { width: 0, height: 0 };
 
     this._stateTex = /** @type {[WebGLTexture, WebGLTexture]} */ ([null, null]);
-    this._stateFb = /** @type {[WebGLFramebuffer, WebGLFramebuffer]} */ ([null, null]);
+    this._energyTex = /** @type {[WebGLTexture, WebGLTexture]} */ ([null, null]);
+    this._worldFb = /** @type {[WebGLFramebuffer, WebGLFramebuffer]} */ ([null, null]);
     this._front = 0;
 
     this.setWorldSize(opts.width, opts.height);
@@ -89,7 +96,10 @@ export class GpuSim {
       program,
       u: {
         state: mustGetUniform(gl, program, "u_state"),
+        energy: mustGetUniform(gl, program, "u_energy"),
         props: mustGetUniform(gl, program, "u_props"),
+        thermal0: mustGetUniform(gl, program, "u_thermal0"),
+        latent: mustGetUniform(gl, program, "u_latent"),
         size: mustGetUniform(gl, program, "u_size"),
         dir: mustGetUniform(gl, program, "u_dir"),
         parity: mustGetUniform(gl, program, "u_parity"),
@@ -108,6 +118,9 @@ export class GpuSim {
       u: {
         size: mustGetUniform(gl, program, "u_size"),
         ambientTemp: mustGetUniform(gl, program, "u_ambientTemp"),
+        thermal0: mustGetUniform(gl, program, "u_thermal0"),
+        thermal1: mustGetUniform(gl, program, "u_thermal1"),
+        latent: mustGetUniform(gl, program, "u_latent"),
       },
     };
   }
@@ -122,7 +135,11 @@ export class GpuSim {
       program,
       u: {
         state: mustGetUniform(gl, program, "u_state"),
+        energy: mustGetUniform(gl, program, "u_energy"),
         props: mustGetUniform(gl, program, "u_props"),
+        thermal0: mustGetUniform(gl, program, "u_thermal0"),
+        thermal1: mustGetUniform(gl, program, "u_thermal1"),
+        latent: mustGetUniform(gl, program, "u_latent"),
         size: mustGetUniform(gl, program, "u_size"),
         dir: mustGetUniform(gl, program, "u_dir"),
         parity: mustGetUniform(gl, program, "u_parity"),
@@ -146,6 +163,7 @@ export class GpuSim {
       program,
       u: {
         state: mustGetUniform(gl, program, "u_state"),
+        energy: mustGetUniform(gl, program, "u_energy"),
         size: mustGetUniform(gl, program, "u_size"),
         center: mustGetUniform(gl, program, "u_center"),
         radius: mustGetUniform(gl, program, "u_radius"),
@@ -153,6 +171,9 @@ export class GpuSim {
         addMode: mustGetUniform(gl, program, "u_addMode"),
         seed: mustGetUniform(gl, program, "u_seed"),
         tick: mustGetUniform(gl, program, "u_tick"),
+        thermal0: mustGetUniform(gl, program, "u_thermal0"),
+        thermal1: mustGetUniform(gl, program, "u_thermal1"),
+        latent: mustGetUniform(gl, program, "u_latent"),
       },
     };
   }
@@ -167,6 +188,7 @@ export class GpuSim {
       program,
       u: {
         state: mustGetUniform(gl, program, "u_state"),
+        energy: mustGetUniform(gl, program, "u_energy"),
         image: mustGetUniform(gl, program, "u_image"),
         palette: mustGetUniform(gl, program, "u_palette"),
         size: mustGetUniform(gl, program, "u_size"),
@@ -175,6 +197,9 @@ export class GpuSim {
         ambientTemp: mustGetUniform(gl, program, "u_ambientTemp"),
         edgeStone: mustGetUniform(gl, program, "u_edgeStone"),
         addMode: mustGetUniform(gl, program, "u_addMode"),
+        thermal0: mustGetUniform(gl, program, "u_thermal0"),
+        thermal1: mustGetUniform(gl, program, "u_thermal1"),
+        latent: mustGetUniform(gl, program, "u_latent"),
       },
     };
   }
@@ -208,11 +233,16 @@ export class GpuSim {
 
     for (let i = 0; i < 2; i++) {
       if (this._stateTex[i]) gl.deleteTexture(this._stateTex[i]);
-      if (this._stateFb[i]) gl.deleteFramebuffer(this._stateFb[i]);
-      const tex = createRgba8uiTexture(gl, { width: this.width, height: this.height });
-      const fb = createFramebufferForTexture(gl, tex);
-      this._stateTex[i] = tex;
-      this._stateFb[i] = fb;
+      if (this._energyTex[i]) gl.deleteTexture(this._energyTex[i]);
+      if (this._worldFb[i]) gl.deleteFramebuffer(this._worldFb[i]);
+
+      const stateTex = createRgba8uiTexture(gl, { width: this.width, height: this.height });
+      const energyTex = createRgba8uiTexture(gl, { width: this.width, height: this.height });
+      const fb = createFramebufferForTextures(gl, [stateTex, energyTex]);
+
+      this._stateTex[i] = stateTex;
+      this._energyTex[i] = energyTex;
+      this._worldFb[i] = fb;
     }
     this._front = 0;
     this.tick = 0;
@@ -237,9 +267,21 @@ export class GpuSim {
     gl.uniform2i(u.size, this.width, this.height);
     gl.uniform1ui(u.ambientTemp, this.ambientTemp >>> 0);
 
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this._thermal0Tex);
+    gl.uniform1i(u.thermal0, 0);
+
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this._thermal1Tex);
+    gl.uniform1i(u.thermal1, 1);
+
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, this._latentTex);
+    gl.uniform1i(u.latent, 2);
+
     // Clear both ping-pong buffers so pick/paint work consistently right away.
-    this._draw(program, this._stateFb[0], this.width, this.height);
-    this._draw(program, this._stateFb[1], this.width, this.height);
+    this._draw(program, this._worldFb[0], this.width, this.height);
+    this._draw(program, this._worldFb[1], this.width, this.height);
     this._front = 0;
     this.tick = 0;
   }
@@ -259,10 +301,17 @@ export class GpuSim {
   }
 
   /**
+   * @returns {WebGLTexture}
+   */
+  _srcEnergyTex() {
+    return this._energyTex[this._front];
+  }
+
+  /**
    * @returns {WebGLFramebuffer}
    */
   _dstFb() {
-    return this._stateFb[1 - this._front];
+    return this._worldFb[1 - this._front];
   }
 
   _swap() {
@@ -303,8 +352,20 @@ export class GpuSim {
     gl.uniform1i(u.state, 0);
 
     gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this._srcEnergyTex());
+    gl.uniform1i(u.energy, 1);
+
+    gl.activeTexture(gl.TEXTURE2);
     gl.bindTexture(gl.TEXTURE_2D, this._propTex);
-    gl.uniform1i(u.props, 1);
+    gl.uniform1i(u.props, 2);
+
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, this._thermal0Tex);
+    gl.uniform1i(u.thermal0, 3);
+
+    gl.activeTexture(gl.TEXTURE4);
+    gl.bindTexture(gl.TEXTURE_2D, this._latentTex);
+    gl.uniform1i(u.latent, 4);
 
     this._draw(program, this._dstFb(), this.width, this.height);
     this._swap();
@@ -338,8 +399,24 @@ export class GpuSim {
     gl.uniform1i(u.state, 0);
 
     gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this._srcEnergyTex());
+    gl.uniform1i(u.energy, 1);
+
+    gl.activeTexture(gl.TEXTURE2);
     gl.bindTexture(gl.TEXTURE_2D, this._propTex);
-    gl.uniform1i(u.props, 1);
+    gl.uniform1i(u.props, 2);
+
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, this._thermal0Tex);
+    gl.uniform1i(u.thermal0, 3);
+
+    gl.activeTexture(gl.TEXTURE4);
+    gl.bindTexture(gl.TEXTURE_2D, this._thermal1Tex);
+    gl.uniform1i(u.thermal1, 4);
+
+    gl.activeTexture(gl.TEXTURE5);
+    gl.bindTexture(gl.TEXTURE_2D, this._latentTex);
+    gl.uniform1i(u.latent, 5);
 
     this._draw(program, this._dstFb(), this.width, this.height);
     this._swap();
@@ -413,6 +490,22 @@ export class GpuSim {
     gl.bindTexture(gl.TEXTURE_2D, this._srcTex());
     gl.uniform1i(u.state, 0);
 
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this._srcEnergyTex());
+    gl.uniform1i(u.energy, 1);
+
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, this._thermal0Tex);
+    gl.uniform1i(u.thermal0, 2);
+
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, this._thermal1Tex);
+    gl.uniform1i(u.thermal1, 3);
+
+    gl.activeTexture(gl.TEXTURE4);
+    gl.bindTexture(gl.TEXTURE_2D, this._latentTex);
+    gl.uniform1i(u.latent, 4);
+
     this._draw(program, this._dstFb(), this.width, this.height);
     this._swap();
   }
@@ -457,12 +550,28 @@ export class GpuSim {
     gl.uniform1i(u.state, 0);
 
     gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, this._imgTex);
-    gl.uniform1i(u.image, 1);
+    gl.bindTexture(gl.TEXTURE_2D, this._srcEnergyTex());
+    gl.uniform1i(u.energy, 1);
 
     gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, this._imgTex);
+    gl.uniform1i(u.image, 2);
+
+    gl.activeTexture(gl.TEXTURE3);
     gl.bindTexture(gl.TEXTURE_2D, this._paletteTex);
-    gl.uniform1i(u.palette, 2);
+    gl.uniform1i(u.palette, 3);
+
+    gl.activeTexture(gl.TEXTURE4);
+    gl.bindTexture(gl.TEXTURE_2D, this._thermal0Tex);
+    gl.uniform1i(u.thermal0, 4);
+
+    gl.activeTexture(gl.TEXTURE5);
+    gl.bindTexture(gl.TEXTURE_2D, this._thermal1Tex);
+    gl.uniform1i(u.thermal1, 5);
+
+    gl.activeTexture(gl.TEXTURE6);
+    gl.bindTexture(gl.TEXTURE_2D, this._latentTex);
+    gl.uniform1i(u.latent, 6);
 
     this._draw(program, this._dstFb(), this.width, this.height);
     this._swap();
@@ -477,7 +586,8 @@ export class GpuSim {
   readCell(x, y) {
     const gl = this.gl;
     const out = new Uint8Array(4);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this._stateFb[this._front]);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this._worldFb[this._front]);
+    gl.readBuffer(gl.COLOR_ATTACHMENT0);
     gl.readPixels(x | 0, y | 0, 1, 1, gl.RGBA_INTEGER, gl.UNSIGNED_BYTE, out);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     return { id: out[0], temp: out[1], data: out[2], flags: out[3] };

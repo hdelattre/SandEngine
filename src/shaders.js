@@ -21,12 +21,16 @@ precision highp int;
 precision highp usampler2D;
 
 uniform usampler2D u_state;
+uniform usampler2D u_energy;
 uniform usampler2D u_props;
+uniform usampler2D u_thermal0;
+uniform usampler2D u_latent;
 uniform ivec2 u_size;
 uniform ivec2 u_dir;
 uniform int u_parity;
 
 layout(location = 0) out uvec4 outState;
+layout(location = 1) out uvec4 outEnergy;
 
 const uint FLAG_IMMOVABLE = 1u << 0u;
 
@@ -38,12 +42,63 @@ uvec4 loadState(ivec2 c) {
   return texelFetch(u_state, c, 0);
 }
 
+uvec4 loadEnergy(ivec2 c) {
+  return texelFetch(u_energy, c, 0);
+}
+
 uvec4 loadProps(uint id) {
   return texelFetch(u_props, ivec2(int(id), 0), 0);
 }
 
+uvec4 loadThermal0(uint id) {
+  return texelFetch(u_thermal0, ivec2(int(id), 0), 0);
+}
+
+uint unpackU16(uvec2 lohi) {
+  return lohi.x | (lohi.y << 8u);
+}
+
+uint latentFusion(uint id) {
+  uvec4 t = texelFetch(u_latent, ivec2(int(id), 0), 0);
+  return unpackU16(t.rg);
+}
+
+uint latentVapor(uint id) {
+  uvec4 t = texelFetch(u_latent, ivec2(int(id), 0), 0);
+  return unpackU16(t.ba);
+}
+
+uint unpackEnergy(uvec4 e) {
+  return unpackU16(e.rg);
+}
+
+uvec4 packEnergy(uint e) {
+  return uvec4(e & 255u, (e >> 8u) & 255u, 0u, 0u);
+}
+
 uint clampU8(int v) {
   return uint(v < 0 ? 0 : (v > 255 ? 255 : v));
+}
+
+uint tempFromEnergy(uint id, uint e) {
+  uvec4 th0 = loadThermal0(id);
+  uint c = max(1u, th0.r);
+  uint tm = th0.g;
+  uint tb = th0.b;
+  uint lf = latentFusion(id);
+  uint lv = latentVapor(id);
+
+  uint eSolidMax = c * tm;
+  if (e < eSolidMax) return min(255u, e / c);
+  if (lf > 0u && e < (eSolidMax + lf)) return tm;
+
+  uint eLiquidMax = c * tb + lf;
+  if (e < eLiquidMax) return min(255u, (e - lf) / c);
+  if (lv > 0u && e < (eLiquidMax + lv)) return tb;
+
+  uint base = lf + lv;
+  if (e <= base) return 0u;
+  return min(255u, (e - base) / c);
 }
 
 void main() {
@@ -58,16 +113,19 @@ void main() {
 
   if (!inBounds(aC) || !inBounds(bC)) {
     outState = loadState(c);
+    outEnergy = loadEnergy(c);
     return;
   }
 
   uvec4 a = loadState(aC);
   uvec4 b = loadState(bC);
+  uvec4 aE4 = loadEnergy(aC);
+  uvec4 bE4 = loadEnergy(bC);
 
   uint aId = a.r;
   uint bId = b.r;
-  uint aTemp = a.g;
-  uint bTemp = b.g;
+  uint aE = unpackEnergy(aE4);
+  uint bE = unpackEnergy(bE4);
 
   uvec4 aP = loadProps(aId);
   uvec4 bP = loadProps(bId);
@@ -77,28 +135,95 @@ void main() {
   uint bCond = bP.g;
   uint cond = (aCond + bCond) >> 1;
 
-  int diff = int(aTemp) - int(bTemp);
-  int transfer = (diff * int(cond)) / 2048;
+  uint aCapa = max(1u, loadThermal0(aId).r);
+  uint bCapa = max(1u, loadThermal0(bId).r);
+  uint cAvg = (aCapa + bCapa) >> 1;
 
-  int newAT = int(aTemp) - transfer;
-  int newBT = int(bTemp) + transfer;
-  a.g = clampU8(newAT);
-  b.g = clampU8(newBT);
+  uint aTemp = tempFromEnergy(aId, aE);
+  uint bTemp = tempFromEnergy(bId, bE);
+  int diffT = int(aTemp) - int(bTemp);
+
+  // Heat transfer strength. Higher divisor = slower diffusion.
+  int transfer = (diffT * int(cond) * int(cAvg)) / 8192;
+  // Avoid "stuck" gradients from integer truncation at low diffs.
+  if (transfer == 0 && diffT != 0 && cond > 40u) transfer = (diffT > 0) ? 1 : -1;
+
+  if (transfer > 0) {
+    uint dE = uint(transfer);
+    if (dE > aE) dE = aE;
+    aE -= dE;
+    bE = min(65535u, bE + dE);
+  } else if (transfer < 0) {
+    uint dE = uint(-transfer);
+    if (dE > bE) dE = bE;
+    bE -= dE;
+    aE = min(65535u, aE + dE);
+  }
+
+  a.g = clampU8(int(tempFromEnergy(aId, aE)));
+  b.g = clampU8(int(tempFromEnergy(bId, bE)));
 
   outState = aIsHere ? a : b;
+  outEnergy = aIsHere ? packEnergy(aE) : packEnergy(bE);
 }
 `;
 
 export const CLEAR_FRAG = `#version 300 es
 precision highp int;
+precision highp usampler2D;
 
 uniform ivec2 u_size;
 uniform uint u_ambientTemp;
+uniform usampler2D u_thermal0;
+uniform usampler2D u_thermal1;
+uniform usampler2D u_latent;
 
 layout(location = 0) out uvec4 outState;
+layout(location = 1) out uvec4 outEnergy;
 
 const uint P_EMPTY = 0u;
 const uint P_STONE = 3u;
+
+uvec4 loadThermal0(uint id) {
+  return texelFetch(u_thermal0, ivec2(int(id), 0), 0);
+}
+
+uvec4 loadThermal1(uint id) {
+  return texelFetch(u_thermal1, ivec2(int(id), 0), 0);
+}
+
+uint unpackU16(uvec2 lohi) {
+  return lohi.x | (lohi.y << 8u);
+}
+
+uint latentFusion(uint id) {
+  uvec4 t = texelFetch(u_latent, ivec2(int(id), 0), 0);
+  return unpackU16(t.rg);
+}
+
+uint latentVapor(uint id) {
+  uvec4 t = texelFetch(u_latent, ivec2(int(id), 0), 0);
+  return unpackU16(t.ba);
+}
+
+uint energyForTemp(uint id, uint temp) {
+  uvec4 th0 = loadThermal0(id);
+  uint c = max(1u, th0.r);
+  uint lf = latentFusion(id);
+  uint lv = latentVapor(id);
+  uvec4 ph = loadThermal1(id);
+  uint solidId = ph.r;
+  uint liquidId = ph.g;
+  uint gasId = ph.b;
+  uint e = c * temp;
+  if (id == liquidId && liquidId != solidId) e += lf;
+  else if (id == gasId && gasId != liquidId) e += (lf + lv);
+  return min(65535u, e);
+}
+
+uvec4 packEnergy(uint e) {
+  return uvec4(e & 255u, (e >> 8u) & 255u, 0u, 0u);
+}
 
 void main() {
   ivec2 c = ivec2(gl_FragCoord.xy);
@@ -106,6 +231,7 @@ void main() {
   bool wall = (c.y == 0) || (c.x == 0) || (c.x == (u_size.x - 1));
   uint id = wall ? P_STONE : P_EMPTY;
   outState = uvec4(id, u_ambientTemp, 0u, 0u);
+  outEnergy = packEnergy(energyForTemp(id, u_ambientTemp));
 }
 `;
 
@@ -115,7 +241,11 @@ precision highp int;
 precision highp usampler2D;
 
 uniform usampler2D u_state;
+uniform usampler2D u_energy;
 uniform usampler2D u_props;
+uniform usampler2D u_thermal0;
+uniform usampler2D u_thermal1;
+uniform usampler2D u_latent;
 uniform ivec2 u_size;
 uniform ivec2 u_dir;
 uniform int u_parity;
@@ -127,6 +257,7 @@ uniform uint u_ambientTemp;
 uniform uint u_passSalt;
 
 layout(location = 0) out uvec4 outState;
+layout(location = 1) out uvec4 outEnergy;
 
 const uint P_EMPTY = 0u;
 const uint P_SAND = 1u;
@@ -176,8 +307,143 @@ uvec4 loadState(ivec2 c) {
   return texelFetch(u_state, c, 0);
 }
 
+uvec4 loadEnergy(ivec2 c) {
+  return texelFetch(u_energy, c, 0);
+}
+
 uvec4 loadProps(uint id) {
   return texelFetch(u_props, ivec2(int(id), 0), 0);
+}
+
+uvec4 loadThermal0(uint id) {
+  return texelFetch(u_thermal0, ivec2(int(id), 0), 0);
+}
+
+uvec4 loadThermal1(uint id) {
+  return texelFetch(u_thermal1, ivec2(int(id), 0), 0);
+}
+
+uint unpackU16(uvec2 lohi) {
+  return lohi.x | (lohi.y << 8u);
+}
+
+uint unpackEnergy(uvec4 e) {
+  return unpackU16(e.rg);
+}
+
+uvec4 packEnergy(uint e) {
+  return uvec4(e & 255u, (e >> 8u) & 255u, 0u, 0u);
+}
+
+uint latentFusion(uint id) {
+  uvec4 t = texelFetch(u_latent, ivec2(int(id), 0), 0);
+  return unpackU16(t.rg);
+}
+
+uint latentVapor(uint id) {
+  uvec4 t = texelFetch(u_latent, ivec2(int(id), 0), 0);
+  return unpackU16(t.ba);
+}
+
+uint heatCapacity(uint id) {
+  return max(1u, loadThermal0(id).r);
+}
+
+uint energyForTemp(uint id, uint temp) {
+  uvec4 th0 = loadThermal0(id);
+  uint c = max(1u, th0.r);
+  uint lf = latentFusion(id);
+  uint lv = latentVapor(id);
+  uvec4 ph = loadThermal1(id);
+  uint solidId = ph.r;
+  uint liquidId = ph.g;
+  uint gasId = ph.b;
+  uint e = c * temp;
+  if (id == liquidId && liquidId != solidId) e += lf;
+  else if (id == gasId && gasId != liquidId) e += (lf + lv);
+  return min(65535u, e);
+}
+
+uint tempFromEnergy(uint id, uint e) {
+  uvec4 th0 = loadThermal0(id);
+  uint c = max(1u, th0.r);
+  uint tm = th0.g;
+  uint tb = th0.b;
+  uint lf = latentFusion(id);
+  uint lv = latentVapor(id);
+
+  uint eSolidMax = c * tm;
+  if (e < eSolidMax) return min(255u, e / c);
+  if (lf > 0u && e < (eSolidMax + lf)) return tm;
+
+  uint eLiquidMax = c * tb + lf;
+  if (e < eLiquidMax) return min(255u, (e - lf) / c);
+  if (lv > 0u && e < (eLiquidMax + lv)) return tb;
+
+  uint base = lf + lv;
+  if (e <= base) return 0u;
+  return min(255u, (e - base) / c);
+}
+
+void applyPhase(inout uvec4 s, inout uint e) {
+  uint id = s.r;
+  uvec4 th0 = loadThermal0(id);
+  uint c = max(1u, th0.r);
+  uint tm = th0.g;
+  uint tb = th0.b;
+  uint lf = latentFusion(id);
+  uint lv = latentVapor(id);
+  uvec4 ph = loadThermal1(id);
+  uint solidId = ph.r;
+  uint liquidId = ph.g;
+  uint gasId = ph.b;
+
+  uint eSolidMax = c * tm;
+  uint eFusionEnd = eSolidMax + lf;
+  uint eLiquidMax = c * tb + lf;
+  uint eVaporEnd = eLiquidMax + lv;
+
+  uint temp;
+  if (e < eSolidMax) {
+    id = solidId;
+    temp = e / c;
+  } else if (lf > 0u && e < eFusionEnd) {
+    id = solidId;
+    temp = tm;
+  } else if (e < eLiquidMax) {
+    id = liquidId;
+    temp = (e - lf) / c;
+  } else if (lv > 0u && e < eVaporEnd) {
+    id = liquidId;
+    temp = tb;
+  } else {
+    id = gasId;
+    uint base = lf + lv;
+    temp = (e > base) ? ((e - base) / c) : 0u;
+  }
+
+  s.r = id;
+  s.g = temp > 255u ? 255u : temp;
+}
+
+void ensureTempMin(inout uint e, uint id, uint tMin) {
+  uint eMin = energyForTemp(id, tMin);
+  if (e < eMin) e = eMin;
+}
+
+void clampTempMax(inout uint e, uint id, uint tMax) {
+  uint eMax = energyForTemp(id, tMax);
+  if (e > eMax) e = eMax;
+}
+
+void addHeat(inout uint e, uint id, uint dT) {
+  uint dE = dT * heatCapacity(id);
+  e = min(65535u, e + dE);
+}
+
+void removeHeat(inout uint e, uint id, uint dT) {
+  uint dE = dT * heatCapacity(id);
+  e = e > dE ? (e - dE) : 0u;
 }
 
 uint clampU8(int v) {
@@ -330,30 +596,18 @@ uvec4 setId(uvec4 s, uint id) {
   return s;
 }
 
-uvec4 selfUpdate(ivec2 c, uvec4 s, uint salt) {
+void selfUpdate(ivec2 c, inout uvec4 s, inout uint e, uint salt) {
   uint id = s.r;
-  uint temp = s.g;
   uint data = s.b;
   uint meta = s.a;
 
   uvec4 p = loadProps(id);
   uint pf = p.b;
 
-  // Ambient cooling.
-  int t = int(temp);
-  int a = int(u_ambientTemp);
-  int diff = a - t;
-  int div = hasFlag(pf, FLAG_GAS) ? 14 : (hasFlag(pf, FLAG_LIQUID) ? 45 : 90);
-  // Lava doesn't cool toward ambient unless exposed; heat loss is handled via
-  // diffusion (and extra surface cooling in the lava-specific block).
-  if (id == P_LAVA) div = 1024;
-  else if (id == P_STONE) div = 140;
-  t += diff / div;
-  temp = clampU8(t);
-
-  // Type-specific updates.
+  // Type-specific updates (temperature is derived from energy).
   if (id == P_FIRE) {
-    if (temp < T_FIRE) temp = T_FIRE;
+    uint eMin = energyForTemp(P_FIRE, T_FIRE);
+    if (e < eMin) e = eMin;
 
     // Fire persists longer near fuel so it can spread (including downward).
     bool nearFuel = false;
@@ -398,7 +652,8 @@ uvec4 selfUpdate(ivec2 c, uvec4 s, uint salt) {
     }
     if (data == 0u) {
       id = P_SMOKE;
-      temp = temp > 180u ? 180u : temp;
+      uint eMax = energyForTemp(P_SMOKE, 180u);
+      if (e > eMax) e = eMax;
       data = 140u;
       meta = 0u;
     }
@@ -406,45 +661,7 @@ uvec4 selfUpdate(ivec2 c, uvec4 s, uint salt) {
     if (data > 0u) data -= 1u;
     if (data == 0u) {
       id = P_EMPTY;
-      temp = u_ambientTemp;
-    }
-  } else if (id == P_STEAM) {
-    if (data > 0u) data -= 1u;
-    if (temp <= T_CONDENSE) {
-      id = P_WATER;
-      data = 0u;
-      // Condensation releases heat a bit.
-      temp = temp + 6u > 255u ? 255u : (temp + 6u);
-    } else if (data == 0u) {
-      id = P_EMPTY;
-      temp = u_ambientTemp;
-    }
-  } else if (id == P_WATER) {
-    if (temp >= T_BOIL) {
-      id = P_STEAM;
-      data = 170u;
-      temp = temp > 235u ? 235u : temp;
-    } else if (temp <= T_FREEZE) {
-      id = P_ICE;
-      data = 0u;
-      meta = 0u;
-    }
-  } else if (id == P_BRINE) {
-    if (temp >= (T_BOIL + 12u)) {
-      id = P_STEAM;
-      data = 170u;
-      temp = temp > 235u ? 235u : temp;
-      meta = 0u;
-    } else if (temp <= T_BRINE_FREEZE) {
-      id = P_ICE;
-      data = 0u;
-      meta = 0u;
-    }
-  } else if (id == P_ICE) {
-    if (temp >= T_ICE_MELT) {
-      id = P_WATER;
-      data = 0u;
-      meta = 0u;
+      e = energyForTemp(P_EMPTY, u_ambientTemp);
     }
   } else if (id == P_LAVA) {
     // Lava only hardens after being exposed to air/gas and sufficiently cooled.
@@ -472,13 +689,16 @@ uvec4 selfUpdate(ivec2 c, uvec4 s, uint salt) {
       exposed = (nid == P_EMPTY) || (nid == P_SMOKE) || (nid == P_STEAM);
     }
 
+    uint temp = tempFromEnergy(P_LAVA, e);
     if (exposed) {
       // Extra surface cooling to make lava spread before crusting.
-      int t2 = int(temp);
-      int a2 = int(u_ambientTemp);
-      int d2 = t2 - a2;
-      if (d2 > 0) t2 -= 1 + (d2 / 48); // 1..3
-      temp = clampU8(t2);
+      int d2 = int(temp) - int(u_ambientTemp);
+      if (d2 > 0) {
+        uint lossT = uint(1 + (d2 / 48)); // 1..3
+        uint lossE = lossT * heatCapacity(P_LAVA);
+        e = e > lossE ? (e - lossE) : 0u;
+        temp = tempFromEnergy(P_LAVA, e);
+      }
 
       if (temp <= T_LAVA_SOLIDIFY) {
         uint under = T_LAVA_SOLIDIFY - temp;
@@ -500,6 +720,7 @@ uvec4 selfUpdate(ivec2 c, uvec4 s, uint salt) {
     }
   } else if (id == P_MUD) {
     // Mud slowly dries when warm.
+    uint temp = tempFromEnergy(P_MUD, e);
     if (temp >= T_MUD_DRY && data > 0u) {
       uint r = randByte(uvec2(c), salt);
       uint loss = 1u + (r < 64u ? 2u : 0u);
@@ -519,13 +740,13 @@ uvec4 selfUpdate(ivec2 c, uvec4 s, uint salt) {
     if (data > 0u && (randByte(uvec2(c), salt) < 6u)) data -= 1u;
     if (data == 0u) {
       id = P_EMPTY;
-      temp = u_ambientTemp;
+      e = energyForTemp(P_EMPTY, u_ambientTemp);
     }
   } else if (id == P_SPARK) {
     if (data > 0u) data -= 1u;
     if (data == 0u) {
       id = P_EMPTY;
-      temp = u_ambientTemp;
+      e = energyForTemp(P_EMPTY, u_ambientTemp);
       meta = 0u;
     }
   } else if (id == P_WIRE) {
@@ -538,17 +759,16 @@ uvec4 selfUpdate(ivec2 c, uvec4 s, uint salt) {
   if (c.y == (u_size.y - 1) && id != P_EMPTY) {
     if (hasFlag(pf, FLAG_GAS) || hasFlag(pf, FLAG_ENERGY)) {
       id = P_EMPTY;
-      temp = u_ambientTemp;
       data = 0u;
       meta = 0u;
+      e = energyForTemp(P_EMPTY, u_ambientTemp);
     }
   }
 
   s.r = id;
-  s.g = temp;
   s.b = data;
   s.a = meta;
-  return s;
+  s.g = tempFromEnergy(id, e);
 }
 
 void main() {
@@ -563,21 +783,24 @@ void main() {
 
   if (!inBounds(aC) || !inBounds(bC)) {
     outState = loadState(c);
+    outEnergy = loadEnergy(c);
     return;
   }
 
   uvec4 a = loadState(aC);
   uvec4 b = loadState(bC);
+  uint aE = unpackEnergy(loadEnergy(aC));
+  uint bE = unpackEnergy(loadEnergy(bC));
 
   if (u_selfStep != 0) {
-    a = selfUpdate(aC, a, 11u + u_passSalt);
-    b = selfUpdate(bC, b, 29u + u_passSalt);
+    selfUpdate(aC, a, aE, 11u + u_passSalt);
+    selfUpdate(bC, b, bE, 29u + u_passSalt);
   }
 
   uint aId = a.r;
   uint bId = b.r;
-  uint aTemp = a.g;
-  uint bTemp = b.g;
+  uint aTemp = tempFromEnergy(aId, aE);
+  uint bTemp = tempFromEnergy(bId, bE);
   uint aData = a.b;
   uint bData = b.b;
   uint aMeta = a.a;
@@ -643,43 +866,30 @@ void main() {
   // Salt dissolves into water -> brine (brine.data is salinity).
   if (aId == P_SALT && bId == P_WATER) {
     aId = P_EMPTY;
+    aE = energyForTemp(P_EMPTY, u_ambientTemp);
     aTemp = u_ambientTemp;
     bId = P_BRINE;
     bData = bData > 120u ? bData : 120u;
   } else if (bId == P_SALT && aId == P_WATER) {
     bId = P_EMPTY;
+    bE = energyForTemp(P_EMPTY, u_ambientTemp);
     bTemp = u_ambientTemp;
     aId = P_BRINE;
     aData = aData > 120u ? aData : 120u;
   } else if (aId == P_SALT && bId == P_BRINE) {
     if (bData < 250u) {
       aId = P_EMPTY;
+      aE = energyForTemp(P_EMPTY, u_ambientTemp);
       aTemp = u_ambientTemp;
       bData = min(255u, bData + 40u);
     }
   } else if (bId == P_SALT && aId == P_BRINE) {
     if (aData < 250u) {
       bId = P_EMPTY;
+      bE = energyForTemp(P_EMPTY, u_ambientTemp);
       bTemp = u_ambientTemp;
       aData = min(255u, aData + 40u);
     }
-  }
-
-  // Lava + water -> stone + steam.
-  if (aId == P_LAVA && (bId == P_WATER || bId == P_ICE || bId == P_BRINE)) {
-    aId = P_STONE;
-    aMeta = 0u;
-    bId = P_STEAM;
-    bTemp = bTemp > 230u ? bTemp : 230u;
-    bData = 170u;
-    bMeta = 0u;
-  } else if (bId == P_LAVA && (aId == P_WATER || aId == P_ICE || aId == P_BRINE)) {
-    bId = P_STONE;
-    bMeta = 0u;
-    aId = P_STEAM;
-    aTemp = aTemp > 230u ? aTemp : 230u;
-    aData = 170u;
-    aMeta = 0u;
   }
 
   // Lava ignites flammables on contact.
@@ -687,7 +897,8 @@ void main() {
     uint r = randByte(uvec2(aC), 77u + u_passSalt);
     if (r < 64u) {
       bId = P_FIRE;
-      bTemp = bTemp > T_FIRE ? bTemp : T_FIRE;
+      ensureTempMin(bE, P_FIRE, T_FIRE);
+      bTemp = tempFromEnergy(P_FIRE, bE);
       bData = 70u;
       bMeta = 10u;
     }
@@ -695,7 +906,8 @@ void main() {
     uint r = randByte(uvec2(aC), 79u + u_passSalt);
     if (r < 64u) {
       aId = P_FIRE;
-      aTemp = aTemp > T_FIRE ? aTemp : T_FIRE;
+      ensureTempMin(aE, P_FIRE, T_FIRE);
+      aTemp = tempFromEnergy(P_FIRE, aE);
       aData = 70u;
       aMeta = 10u;
     }
@@ -708,29 +920,35 @@ void main() {
     // Fire + water/brine: quench.
     if (aId == P_FIRE && (bId == P_WATER || bId == P_BRINE)) {
       aId = P_SMOKE;
-      aTemp = aTemp > 185u ? 185u : aTemp;
+      clampTempMax(aE, P_SMOKE, 185u);
+      aTemp = tempFromEnergy(P_SMOKE, aE);
       aData = 90u;
-      bTemp = clampU8(int(bTemp) + 48);
+      addHeat(bE, bId, 48u);
+      bTemp = tempFromEnergy(bId, bE);
     } else if (bId == P_FIRE && (aId == P_WATER || aId == P_BRINE)) {
       bId = P_SMOKE;
-      bTemp = bTemp > 185u ? 185u : bTemp;
+      clampTempMax(bE, P_SMOKE, 185u);
+      bTemp = tempFromEnergy(P_SMOKE, bE);
       bData = 90u;
-      aTemp = clampU8(int(aTemp) + 48);
+      addHeat(aE, aId, 48u);
+      aTemp = tempFromEnergy(aId, aE);
     }
 
     // Fire + ice: melt + quench.
     if (aId == P_FIRE && bId == P_ICE) {
       aId = P_SMOKE;
-      aTemp = aTemp > 185u ? 185u : aTemp;
+      clampTempMax(aE, P_SMOKE, 185u);
+      aTemp = tempFromEnergy(P_SMOKE, aE);
       aData = 90u;
-      bId = P_WATER;
-      bTemp = clampU8(int(bTemp) + 70);
+      addHeat(bE, bId, 70u);
+      bTemp = tempFromEnergy(bId, bE);
     } else if (bId == P_FIRE && aId == P_ICE) {
       bId = P_SMOKE;
-      bTemp = bTemp > 185u ? 185u : bTemp;
+      clampTempMax(bE, P_SMOKE, 185u);
+      bTemp = tempFromEnergy(P_SMOKE, bE);
       bData = 90u;
-      aId = P_WATER;
-      aTemp = clampU8(int(aTemp) + 70);
+      addHeat(aE, aId, 70u);
+      aTemp = tempFromEnergy(aId, aE);
     }
 
     // Fire + flammable: ignite with temperature-influenced chance.
@@ -742,7 +960,8 @@ void main() {
       else if (u_dir.y != 0) chance += 6u;
       if (r < chance) {
         bId = P_FIRE;
-        bTemp = bTemp > T_FIRE ? bTemp : T_FIRE;
+        ensureTempMin(bE, P_FIRE, T_FIRE);
+        bTemp = tempFromEnergy(P_FIRE, bE);
         bData = 80u;
         bMeta = 10u;
         aData = max(aData, 120u); // keep fire alive near fuel
@@ -755,7 +974,8 @@ void main() {
       else if (u_dir.y != 0) chance += 4u;
       if (r < chance) {
         aId = P_FIRE;
-        aTemp = aTemp > T_FIRE ? aTemp : T_FIRE;
+        ensureTempMin(aE, P_FIRE, T_FIRE);
+        aTemp = tempFromEnergy(P_FIRE, aE);
         aData = 80u;
         aMeta = 10u;
         bData = max(bData, 120u);
@@ -772,6 +992,7 @@ void main() {
         uint chance = hasFlag(bF, FLAG_DISSOLVABLE) ? 36u : 10u;
         if (r < chance && aData > 0u && bId != P_STONE) {
           bId = P_EMPTY;
+          bE = energyForTemp(P_EMPTY, u_ambientTemp);
           bTemp = u_ambientTemp;
           uint cost = hasFlag(bF, FLAG_DISSOLVABLE) ? 10u : 5u;
           aData = aData > cost ? (aData - cost) : 0u;
@@ -783,36 +1004,10 @@ void main() {
         uint chance = hasFlag(aF, FLAG_DISSOLVABLE) ? 36u : 10u;
         if (r < chance && bData > 0u && aId != P_STONE) {
           aId = P_EMPTY;
+          aE = energyForTemp(P_EMPTY, u_ambientTemp);
           aTemp = u_ambientTemp;
           uint cost = hasFlag(aF, FLAG_DISSOLVABLE) ? 10u : 5u;
           bData = bData > cost ? (bData - cost) : 0u;
-        }
-      }
-    }
-  }
-
-  // Brine evaporates into steam near air when warm, concentrating and sometimes crystallizing salt.
-  if (u_dir.x == 0 && u_dir.y == -1) {
-    uint r = randByte(uvec2(bC), 171u + u_passSalt);
-    if (aId == P_EMPTY && bId == P_BRINE && bTemp >= T_BRINE_EVAP) {
-      uint chance = 6u + ((bTemp - T_BRINE_EVAP) >> 3); // 6..~16
-      chance = min(chance, 22u);
-      if (r < chance) {
-        uint r2 = randByte(uvec2(bC), 173u + u_passSalt);
-        bool saturated = bData >= 240u;
-
-        aId = P_STEAM;
-        aTemp = (bTemp > 200u) ? bTemp : 200u;
-        aData = saturated ? 120u : 90u;
-        aMeta = 0u;
-
-        if (saturated && r2 < 120u) {
-          bId = P_SALT;
-          bData = 0u;
-          bMeta = 0u;
-        } else {
-          bData = min(255u, bData + 12u);
-          bTemp = clampU8(int(bTemp) - 6); // latent heat
         }
       }
     }
@@ -845,6 +1040,7 @@ void main() {
     if (aId == P_WIRE && bId == P_SPARK) {
       aData = min(255u, aData + 120u);
       bId = P_EMPTY;
+      bE = energyForTemp(P_EMPTY, u_ambientTemp);
       bTemp = u_ambientTemp;
       bData = 0u;
       bMeta = 0u;
@@ -852,6 +1048,7 @@ void main() {
     } else if (bId == P_WIRE && aId == P_SPARK) {
       bData = min(255u, bData + 120u);
       aId = P_EMPTY;
+      aE = energyForTemp(P_EMPTY, u_ambientTemp);
       aTemp = u_ambientTemp;
       aData = 0u;
       aMeta = 0u;
@@ -863,7 +1060,9 @@ void main() {
       uint chance = 6u + ((aData - 180u) >> 3); // 6..~15
       if (rA < chance) {
         bId = P_SPARK;
-        bTemp = aTemp > T_FIRE ? aTemp : T_FIRE;
+        uint t = aTemp > T_FIRE ? aTemp : T_FIRE;
+        bE = energyForTemp(P_SPARK, t);
+        bTemp = tempFromEnergy(P_SPARK, bE);
         bData = 18u;
         bMeta = 0u;
         aData = aData > 50u ? (aData - 50u) : 0u;
@@ -873,7 +1072,9 @@ void main() {
       uint chance = 6u + ((bData - 180u) >> 3); // 6..~15
       if (rB < chance) {
         aId = P_SPARK;
-        aTemp = bTemp > T_FIRE ? bTemp : T_FIRE;
+        uint t = bTemp > T_FIRE ? bTemp : T_FIRE;
+        aE = energyForTemp(P_SPARK, t);
+        aTemp = tempFromEnergy(P_SPARK, aE);
         aData = 18u;
         aMeta = 0u;
         bData = bData > 50u ? (bData - 50u) : 0u;
@@ -884,11 +1085,13 @@ void main() {
     // Charged wire heats nearby water/brine (simple shock heating).
     if (orth && aId == P_WIRE && (bId == P_WATER || bId == P_BRINE) && aData >= 120u) {
       uint heat = 6u + (aData >> 5u); // 6..13
-      bTemp = clampU8(int(bTemp) + int(heat));
+      addHeat(bE, bId, heat);
+      bTemp = tempFromEnergy(bId, bE);
       aData = aData > 8u ? (aData - 8u) : 0u;
     } else if (orth && bId == P_WIRE && (aId == P_WATER || aId == P_BRINE) && bData >= 120u) {
       uint heat = 6u + (bData >> 5u); // 6..13
-      aTemp = clampU8(int(aTemp) + int(heat));
+      addHeat(aE, aId, heat);
+      aTemp = tempFromEnergy(aId, aE);
       bData = bData > 8u ? (bData - 8u) : 0u;
     }
 
@@ -897,7 +1100,8 @@ void main() {
       uint chance = 12u + ((aData - 210u) >> 2); // 12..23
       if (rA < chance) {
         bId = P_FIRE;
-        bTemp = bTemp > T_FIRE ? bTemp : T_FIRE;
+        ensureTempMin(bE, P_FIRE, T_FIRE);
+        bTemp = tempFromEnergy(P_FIRE, bE);
         bData = 70u;
         bMeta = 10u;
         aData = aData > 80u ? (aData - 80u) : 0u;
@@ -907,7 +1111,8 @@ void main() {
       uint chance = 12u + ((bData - 210u) >> 2); // 12..23
       if (rB < chance) {
         aId = P_FIRE;
-        aTemp = aTemp > T_FIRE ? aTemp : T_FIRE;
+        ensureTempMin(aE, P_FIRE, T_FIRE);
+        aTemp = tempFromEnergy(P_FIRE, aE);
         aData = 70u;
         aMeta = 10u;
         bData = bData > 80u ? (bData - 80u) : 0u;
@@ -918,41 +1123,45 @@ void main() {
     // Spark fizzles in liquids/ice and can ignite flammables.
     if (aId == P_SPARK && (bId == P_WATER || bId == P_BRINE)) {
       aId = P_EMPTY;
+      aE = energyForTemp(P_EMPTY, u_ambientTemp);
       aTemp = u_ambientTemp;
       aData = 0u;
       aMeta = 0u;
-      bTemp = clampU8(int(bTemp) + 24);
+      addHeat(bE, bId, 24u);
+      bTemp = tempFromEnergy(bId, bE);
     } else if (bId == P_SPARK && (aId == P_WATER || aId == P_BRINE)) {
       bId = P_EMPTY;
+      bE = energyForTemp(P_EMPTY, u_ambientTemp);
       bTemp = u_ambientTemp;
       bData = 0u;
       bMeta = 0u;
-      aTemp = clampU8(int(aTemp) + 24);
+      addHeat(aE, aId, 24u);
+      aTemp = tempFromEnergy(aId, aE);
     } else if (aId == P_SPARK && bId == P_ICE) {
       aId = P_EMPTY;
+      aE = energyForTemp(P_EMPTY, u_ambientTemp);
       aTemp = u_ambientTemp;
       aData = 0u;
       aMeta = 0u;
-      bId = P_WATER;
-      bTemp = clampU8(int(bTemp) + 32);
-      bData = 0u;
-      bMeta = 0u;
+      addHeat(bE, bId, 32u);
+      bTemp = tempFromEnergy(bId, bE);
     } else if (bId == P_SPARK && aId == P_ICE) {
       bId = P_EMPTY;
+      bE = energyForTemp(P_EMPTY, u_ambientTemp);
       bTemp = u_ambientTemp;
       bData = 0u;
       bMeta = 0u;
-      aId = P_WATER;
-      aTemp = clampU8(int(aTemp) + 32);
-      aData = 0u;
-      aMeta = 0u;
+      addHeat(aE, aId, 32u);
+      aTemp = tempFromEnergy(aId, aE);
     } else if (aId == P_SPARK && hasFlag(bF, FLAG_FLAMMABLE)) {
       if (rA < 90u) {
         bId = P_FIRE;
-        bTemp = bTemp > T_FIRE ? bTemp : T_FIRE;
+        ensureTempMin(bE, P_FIRE, T_FIRE);
+        bTemp = tempFromEnergy(P_FIRE, bE);
         bData = 70u;
         bMeta = 10u;
         aId = P_EMPTY;
+        aE = energyForTemp(P_EMPTY, u_ambientTemp);
         aTemp = u_ambientTemp;
         aData = 0u;
         aMeta = 0u;
@@ -960,10 +1169,12 @@ void main() {
     } else if (bId == P_SPARK && hasFlag(aF, FLAG_FLAMMABLE)) {
       if (rB < 90u) {
         aId = P_FIRE;
-        aTemp = aTemp > T_FIRE ? aTemp : T_FIRE;
+        ensureTempMin(aE, P_FIRE, T_FIRE);
+        aTemp = tempFromEnergy(P_FIRE, aE);
         aData = 70u;
         aMeta = 10u;
         bId = P_EMPTY;
+        bE = energyForTemp(P_EMPTY, u_ambientTemp);
         bTemp = u_ambientTemp;
         bData = 0u;
         bMeta = 0u;
@@ -973,20 +1184,32 @@ void main() {
 
   // Plant grows with directional branching (metadata-driven).
   if (aId == P_PLANT && bId == P_EMPTY) {
+    uint prev = bId;
     tryPlantGrow(aC, u_dir, aId, aTemp, aData, aMeta, bId, bTemp, bData, bMeta, 201u + u_passSalt);
+    if (prev != bId) bE = energyForTemp(bId, bTemp);
   } else if (bId == P_PLANT && aId == P_EMPTY) {
+    uint prev = aId;
     tryPlantGrow(bC, -u_dir, bId, bTemp, bData, bMeta, aId, aTemp, aData, aMeta, 203u + u_passSalt);
+    if (prev != aId) aE = energyForTemp(aId, aTemp);
   }
 
   // Apply the updated ids/data back.
   a.r = aId;
   b.r = bId;
-  a.g = aTemp;
-  b.g = bTemp;
   a.b = aData;
   b.b = bData;
   a.a = aMeta;
   b.a = bMeta;
+  a.g = tempFromEnergy(aId, aE);
+  b.g = tempFromEnergy(bId, bE);
+
+  // Phase changes are energy-driven and happen after chemistry edits.
+  applyPhase(a, aE);
+  applyPhase(b, bE);
+  aId = a.r;
+  bId = b.r;
+  aTemp = a.g;
+  bTemp = b.g;
 
   // Reload props after chemistry changes.
   aP = loadProps(aId);
@@ -1019,6 +1242,9 @@ void main() {
               uvec4 tmp = a;
               a = b;
               b = tmp;
+              uint tmpE = aE;
+              aE = bE;
+              bE = tmpE;
             }
           }
         }
@@ -1049,6 +1275,9 @@ void main() {
               uvec4 tmp = a;
               a = b;
               b = tmp;
+              uint tmpE = aE;
+              aE = bE;
+              bE = tmpE;
             }
           }
         } else if (!bPowder && hasFlag(aF, FLAG_LIQUID) && bDisplaceable) {
@@ -1065,6 +1294,9 @@ void main() {
               uvec4 tmp = a;
               a = b;
               b = tmp;
+              uint tmpE = aE;
+              aE = bE;
+              bE = tmpE;
             }
           }
         } else {
@@ -1075,6 +1307,9 @@ void main() {
               uvec4 tmp = a;
               a = b;
               b = tmp;
+              uint tmpE = aE;
+              aE = bE;
+              bE = tmpE;
             }
           } else if (bId == P_EMPTY && !aPowder && isFluid(aF) && aId != P_EMPTY && !(aId == P_FIRE && aMeta != 0u)) {
             uint r = randByte(uvec2(aC), 93u + u_passSalt);
@@ -1082,6 +1317,9 @@ void main() {
               uvec4 tmp = a;
               a = b;
               b = tmp;
+              uint tmpE = aE;
+              aE = bE;
+              bE = tmpE;
             }
           }
         }
@@ -1090,6 +1328,7 @@ void main() {
   }
 
   outState = aIsHere ? a : b;
+  outEnergy = aIsHere ? packEnergy(aE) : packEnergy(bE);
 }
 `;
 
@@ -1099,6 +1338,10 @@ precision highp int;
 precision highp usampler2D;
 
 uniform usampler2D u_state;
+uniform usampler2D u_energy;
+uniform usampler2D u_thermal0;
+uniform usampler2D u_thermal1;
+uniform usampler2D u_latent;
 uniform ivec2 u_size;
 uniform ivec2 u_center;
 uniform int u_radius;
@@ -1108,6 +1351,7 @@ uniform uint u_tick;
 uniform int u_addMode;
 
 layout(location = 0) out uvec4 outState;
+layout(location = 1) out uvec4 outEnergy;
 
 const uint P_EMPTY = 0u;
 const uint P_WATER = 2u;
@@ -1121,6 +1365,47 @@ const uint P_SALT = 14u;
 const uint P_BRINE = 15u;
 const uint P_WIRE = 16u;
 const uint P_SPARK = 17u;
+
+uvec4 loadThermal0(uint id) {
+  return texelFetch(u_thermal0, ivec2(int(id), 0), 0);
+}
+
+uvec4 loadThermal1(uint id) {
+  return texelFetch(u_thermal1, ivec2(int(id), 0), 0);
+}
+
+uint unpackU16(uvec2 lohi) {
+  return lohi.x | (lohi.y << 8u);
+}
+
+uint latentFusion(uint id) {
+  uvec4 t = texelFetch(u_latent, ivec2(int(id), 0), 0);
+  return unpackU16(t.rg);
+}
+
+uint latentVapor(uint id) {
+  uvec4 t = texelFetch(u_latent, ivec2(int(id), 0), 0);
+  return unpackU16(t.ba);
+}
+
+uint energyForTemp(uint id, uint temp) {
+  uvec4 th0 = loadThermal0(id);
+  uint c = max(1u, th0.r);
+  uint lf = latentFusion(id);
+  uint lv = latentVapor(id);
+  uvec4 ph = loadThermal1(id);
+  uint solidId = ph.r;
+  uint liquidId = ph.g;
+  uint gasId = ph.b;
+  uint e = c * temp;
+  if (id == liquidId && liquidId != solidId) e += lf;
+  else if (id == gasId && gasId != liquidId) e += (lf + lv);
+  return min(65535u, e);
+}
+
+uvec4 packEnergy(uint e) {
+  return uvec4(e & 255u, (e >> 8u) & 255u, 0u, 0u);
+}
 
 uint hashU32(uint x) {
   x ^= x >> 16;
@@ -1144,9 +1429,11 @@ void main() {
   ivec2 c = ivec2(gl_FragCoord.xy);
   if (c.x < 0 || c.y < 0 || c.x >= u_size.x || c.y >= u_size.y) {
     outState = uvec4(0u);
+    outEnergy = uvec4(0u);
     return;
   }
   uvec4 cur = texelFetch(u_state, c, 0);
+  uvec4 curE = texelFetch(u_energy, c, 0);
 
   ivec2 d = c - u_center;
   int r2 = u_radius * u_radius;
@@ -1187,6 +1474,7 @@ void main() {
 
         if (!changed) {
           outState = cur;
+          outEnergy = curE;
           return;
         }
         s = nextCell;
@@ -1216,8 +1504,12 @@ void main() {
     }
 
     outState = s;
+    outEnergy = packEnergy(energyForTemp(s.r, s.g));
   }
-  else outState = cur;
+  else {
+    outState = cur;
+    outEnergy = curE;
+  }
 }
 `;
 
@@ -1227,8 +1519,12 @@ precision highp int;
 precision highp usampler2D;
 
 uniform usampler2D u_state;
+uniform usampler2D u_energy;
 uniform sampler2D u_image;
 uniform sampler2D u_palette;
+uniform usampler2D u_thermal0;
+uniform usampler2D u_thermal1;
+uniform usampler2D u_latent;
 uniform ivec2 u_size;
 uniform ivec2 u_imgSize;
 uniform ivec2 u_origin;
@@ -1237,6 +1533,7 @@ uniform int u_edgeStone;
 uniform int u_addMode;
 
 layout(location = 0) out uvec4 outState;
+layout(location = 1) out uvec4 outEnergy;
 
 const uint P_EMPTY = 0u;
 const uint P_SAND = 1u;
@@ -1260,6 +1557,51 @@ const uint P_BATTERY = 18u;
 
 uvec4 loadState(ivec2 c) {
   return texelFetch(u_state, c, 0);
+}
+
+uvec4 loadEnergy(ivec2 c) {
+  return texelFetch(u_energy, c, 0);
+}
+
+uvec4 loadThermal0(uint id) {
+  return texelFetch(u_thermal0, ivec2(int(id), 0), 0);
+}
+
+uvec4 loadThermal1(uint id) {
+  return texelFetch(u_thermal1, ivec2(int(id), 0), 0);
+}
+
+uint unpackU16(uvec2 lohi) {
+  return lohi.x | (lohi.y << 8u);
+}
+
+uint latentFusion(uint id) {
+  uvec4 t = texelFetch(u_latent, ivec2(int(id), 0), 0);
+  return unpackU16(t.rg);
+}
+
+uint latentVapor(uint id) {
+  uvec4 t = texelFetch(u_latent, ivec2(int(id), 0), 0);
+  return unpackU16(t.ba);
+}
+
+uint energyForTemp(uint id, uint temp) {
+  uvec4 th0 = loadThermal0(id);
+  uint c = max(1u, th0.r);
+  uint lf = latentFusion(id);
+  uint lv = latentVapor(id);
+  uvec4 ph = loadThermal1(id);
+  uint solidId = ph.r;
+  uint liquidId = ph.g;
+  uint gasId = ph.b;
+  uint e = c * temp;
+  if (id == liquidId && liquidId != solidId) e += lf;
+  else if (id == gasId && gasId != liquidId) e += (lf + lv);
+  return min(65535u, e);
+}
+
+uvec4 packEnergy(uint e) {
+  return uvec4(e & 255u, (e >> 8u) & 255u, 0u, 0u);
 }
 
 uvec4 makeCell(uint id) {
@@ -1304,16 +1646,19 @@ uint mapColor(vec3 rgb) {
 void main() {
   ivec2 c = ivec2(gl_FragCoord.xy);
   uvec4 cur = loadState(c);
+  uvec4 curE = loadEnergy(c);
 
   // Preserve boundaries (bottom + side walls).
   if (c.x == 0 || c.x == (u_size.x - 1) || c.y == 0) {
     outState = cur;
+    outEnergy = curE;
     return;
   }
 
   ivec2 ic = c - u_origin;
   if (ic.x < 0 || ic.y < 0 || ic.x >= u_imgSize.x || ic.y >= u_imgSize.y) {
     outState = cur;
+    outEnergy = curE;
     return;
   }
 
@@ -1322,6 +1667,7 @@ void main() {
   // Treat transparency as "no-op" so you can paste over an existing world.
   if (px.a < 0.05) {
     outState = cur;
+    outEnergy = curE;
     return;
   }
 
@@ -1332,15 +1678,27 @@ void main() {
 
   // Near-white backgrounds become air (common for pasted images).
   if (lum > 0.97 && sat < 0.08) {
-    if (u_addMode != 0) outState = cur;
-    else outState = makeCell(P_EMPTY);
+    if (u_addMode != 0) {
+      outState = cur;
+      outEnergy = curE;
+    } else {
+      uvec4 s = makeCell(P_EMPTY);
+      outState = s;
+      outEnergy = packEnergy(energyForTemp(s.r, s.g));
+    }
     return;
   }
 
   // Very dark, low-saturation pixels become stone (useful for outlines).
   if (lum < 0.05 && sat < 0.25) {
-    if (u_addMode != 0 && cur.r != P_EMPTY) outState = cur;
-    else outState = makeCell(P_STONE);
+    if (u_addMode != 0 && cur.r != P_EMPTY) {
+      outState = cur;
+      outEnergy = curE;
+    } else {
+      uvec4 s = makeCell(P_STONE);
+      outState = s;
+      outEnergy = packEnergy(energyForTemp(s.r, s.g));
+    }
     return;
   }
 
@@ -1376,19 +1734,35 @@ void main() {
     float avg = (lumL + lumR + lumD + lumU) * 0.25;
     // Only stamp on the "darker" side of an edge so outlines stay ~1px thick.
     if (e > 0.22 && (lum + 0.025) < avg) {
-      if (u_addMode != 0 && cur.r != P_EMPTY) outState = cur;
-      else outState = makeCell(P_STONE);
+      if (u_addMode != 0 && cur.r != P_EMPTY) {
+        outState = cur;
+        outEnergy = curE;
+      } else {
+        uvec4 s = makeCell(P_STONE);
+        outState = s;
+        outEnergy = packEnergy(energyForTemp(s.r, s.g));
+      }
       return;
     }
   }
 
   uint id = mapColor(px.rgb);
   if (u_addMode != 0) {
-    if (id == P_EMPTY) outState = cur;
-    else if (cur.r != P_EMPTY) outState = cur;
-    else outState = makeCell(id);
+    if (id == P_EMPTY) {
+      outState = cur;
+      outEnergy = curE;
+    } else if (cur.r != P_EMPTY) {
+      outState = cur;
+      outEnergy = curE;
+    } else {
+      uvec4 s = makeCell(id);
+      outState = s;
+      outEnergy = packEnergy(energyForTemp(s.r, s.g));
+    }
   } else {
-    outState = makeCell(id);
+    uvec4 s = makeCell(id);
+    outState = s;
+    outEnergy = packEnergy(energyForTemp(s.r, s.g));
   }
 }
 `;
