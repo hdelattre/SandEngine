@@ -172,6 +172,7 @@ export class GpuSim {
         imgSize: mustGetUniform(gl, program, "u_imgSize"),
         origin: mustGetUniform(gl, program, "u_origin"),
         ambientTemp: mustGetUniform(gl, program, "u_ambientTemp"),
+        edgeStone: mustGetUniform(gl, program, "u_edgeStone"),
       },
     };
   }
@@ -420,9 +421,11 @@ export class GpuSim {
    * @param {number} imgHeight
    * @param {number} originX
    * @param {number} originY
+   * @param {{edgeStone?: boolean} | undefined} [opts]
    */
-  stampImage(image, imgWidth, imgHeight, originX, originY) {
+  stampImage(image, imgWidth, imgHeight, originX, originY, opts) {
     const gl = this.gl;
+    const edgeStone = opts?.edgeStone ?? true;
 
     this._imgSize.width = imgWidth | 0;
     this._imgSize.height = imgHeight | 0;
@@ -440,6 +443,7 @@ export class GpuSim {
     gl.uniform2i(u.imgSize, this._imgSize.width, this._imgSize.height);
     gl.uniform2i(u.origin, originX | 0, originY | 0);
     gl.uniform1ui(u.ambientTemp, this.ambientTemp >>> 0);
+    gl.uniform1i(u.edgeStone, edgeStone ? 1 : 0);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this._srcTex());

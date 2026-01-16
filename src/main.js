@@ -37,6 +37,7 @@ const brushSize = /** @type {HTMLInputElement} */ (document.getElementById("brus
 const stepsPerFrame = /** @type {HTMLInputElement} */ (document.getElementById("stepsPerFrame"));
 const viewSelect = /** @type {HTMLSelectElement} */ (document.getElementById("viewSelect"));
 const resSelect = /** @type {HTMLSelectElement} */ (document.getElementById("resSelect"));
+const pasteEdgeStone = /** @type {HTMLInputElement} */ (document.getElementById("pasteEdgeStone"));
 const levelHintEl = /** @type {HTMLElement} */ (document.getElementById("levelHint"));
 const helpModal = /** @type {HTMLDivElement} */ (document.getElementById("helpModal"));
 const helpBackdrop = /** @type {HTMLDivElement} */ (document.getElementById("helpBackdrop"));
@@ -312,7 +313,7 @@ function setActiveLevel(levelId) {
   sim.seed = next.seed >>> 0;
 
   const { source, width, height, originX, originY } = next.buildStamp();
-  sim.stampImage(source, width, height, originX, originY);
+  sim.stampImage(source, width, height, originX, originY, { edgeStone: false });
 
   particleSelect.value = String(next.allowedPaintIds[0] ?? Particle.STONE);
   toast(`${next.name}`, 1400);
@@ -421,7 +422,7 @@ window.addEventListener("paste", async (e) => {
     oy = clamp(oy, 1, sim.height - h);
 
     // @ts-ignore - OffscreenCanvas is a valid CanvasImageSource at runtime.
-    sim.stampImage(offscreen, w, h, ox, oy);
+    sim.stampImage(offscreen, w, h, ox, oy, { edgeStone: pasteEdgeStone.checked });
     toast(`pasted ${srcW}×${srcH} → ${w}×${h}`, 2600);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

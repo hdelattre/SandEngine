@@ -1124,6 +1124,7 @@ uniform ivec2 u_size;
 uniform ivec2 u_imgSize;
 uniform ivec2 u_origin;
 uniform uint u_ambientTemp;
+uniform int u_edgeStone;
 
 layout(location = 0) out uvec4 outState;
 
@@ -1229,6 +1230,43 @@ void main() {
   if (lum < 0.05 && sat < 0.25) {
     outState = makeCell(P_STONE);
     return;
+  }
+
+  // High-frequency edges become stone to preserve crisp shapes.
+  if (u_edgeStone != 0) {
+    ivec2 imMax = u_imgSize - ivec2(1);
+    ivec2 lC = ivec2(max(ic.x - 1, 0), ic.y);
+    ivec2 rC = ivec2(min(ic.x + 1, imMax.x), ic.y);
+    ivec2 dC = ivec2(ic.x, max(ic.y - 1, 0));
+    ivec2 uC = ivec2(ic.x, min(ic.y + 1, imMax.y));
+
+    vec4 pxL = texelFetch(u_image, lC, 0);
+    vec4 pxR = texelFetch(u_image, rC, 0);
+    vec4 pxD = texelFetch(u_image, dC, 0);
+    vec4 pxU = texelFetch(u_image, uC, 0);
+
+    float lumL = dot(pxL.rgb, vec3(0.2126, 0.7152, 0.0722));
+    float lumR = dot(pxR.rgb, vec3(0.2126, 0.7152, 0.0722));
+    float lumD = dot(pxD.rgb, vec3(0.2126, 0.7152, 0.0722));
+    float lumU = dot(pxU.rgb, vec3(0.2126, 0.7152, 0.0722));
+
+    // Treat transparent neighbors as bright background.
+    if (ic.x == 0) lumL = 1.0;
+    if (ic.x == imMax.x) lumR = 1.0;
+    if (ic.y == 0) lumD = 1.0;
+    if (ic.y == imMax.y) lumU = 1.0;
+    if (pxL.a < 0.05) lumL = 1.0;
+    if (pxR.a < 0.05) lumR = 1.0;
+    if (pxD.a < 0.05) lumD = 1.0;
+    if (pxU.a < 0.05) lumU = 1.0;
+
+    float e = max(max(abs(lum - lumL), abs(lum - lumR)), max(abs(lum - lumD), abs(lum - lumU)));
+    float avg = (lumL + lumR + lumD + lumU) * 0.25;
+    // Only stamp on the "darker" side of an edge so outlines stay ~1px thick.
+    if (e > 0.22 && (lum + 0.025) < avg) {
+      outState = makeCell(P_STONE);
+      return;
+    }
   }
 
   uint id = mapColor(px.rgb);

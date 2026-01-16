@@ -104,8 +104,13 @@ button:hover {
 }
 
 select,
-input[type="range"] {
+input[type="range"],
+input[type="checkbox"] {
   accent-color: var(--accent);
+}
+
+input[type="checkbox"] {
+  margin: 0;
 }
 
 select {
