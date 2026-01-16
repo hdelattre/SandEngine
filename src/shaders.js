@@ -354,11 +354,53 @@ uvec4 selfUpdate(ivec2 c, uvec4 s, uint salt) {
   // Type-specific updates.
   if (id == P_FIRE) {
     if (temp < T_FIRE) temp = T_FIRE;
-    if (data > 0u) data -= 1u;
+
+    // Fire persists longer near fuel so it can spread (including downward).
+    bool nearFuel = false;
+    bool fuelBelow = false;
+    ivec2 n;
+
+    n = c + ivec2(0, -1);
+    if (inBounds(n)) {
+      uint nid = loadState(n).r;
+      if (hasFlag(loadProps(nid).b, FLAG_FLAMMABLE)) {
+        nearFuel = true;
+        fuelBelow = true;
+      }
+    }
+
+    n = c + ivec2(1, 0);
+    if (!nearFuel && inBounds(n)) {
+      uint nid = loadState(n).r;
+      if (hasFlag(loadProps(nid).b, FLAG_FLAMMABLE)) nearFuel = true;
+    }
+    n = c + ivec2(-1, 0);
+    if (!nearFuel && inBounds(n)) {
+      uint nid = loadState(n).r;
+      if (hasFlag(loadProps(nid).b, FLAG_FLAMMABLE)) nearFuel = true;
+    }
+    n = c + ivec2(0, 1);
+    if (!nearFuel && inBounds(n)) {
+      uint nid = loadState(n).r;
+      if (hasFlag(loadProps(nid).b, FLAG_FLAMMABLE)) nearFuel = true;
+    }
+
+    if (nearFuel) data = max(data, 120u);
+    if (fuelBelow) meta = max(meta, 2u);
+    else if (meta > 0u) meta -= 1u;
+
+    if (data > 0u) {
+      bool doDecay = true;
+      if (nearFuel) doDecay = false;
+      else if (meta > 0u) doDecay = false;
+      else if ((u_tick & 1u) != 0u) doDecay = false; // slower burn rate
+      if (doDecay) data -= 1u;
+    }
     if (data == 0u) {
       id = P_SMOKE;
       temp = temp > 180u ? 180u : temp;
       data = 140u;
+      meta = 0u;
     }
   } else if (id == P_SMOKE) {
     if (data > 0u) data -= 1u;
@@ -646,14 +688,16 @@ void main() {
     if (r < 64u) {
       bId = P_FIRE;
       bTemp = bTemp > T_FIRE ? bTemp : T_FIRE;
-      bData = 45u;
+      bData = 70u;
+      bMeta = 10u;
     }
   } else if (bId == P_LAVA && hasFlag(aF, FLAG_FLAMMABLE)) {
     uint r = randByte(uvec2(aC), 79u + u_passSalt);
     if (r < 64u) {
       aId = P_FIRE;
       aTemp = aTemp > T_FIRE ? aTemp : T_FIRE;
-      aData = 45u;
+      aData = 70u;
+      aMeta = 10u;
     }
   }
 
@@ -694,21 +738,27 @@ void main() {
       uint chance = 18u + (bTemp > 170u ? 22u : 0u);
       if (bId == P_OIL) chance += 12u;
       else if (bId == P_PLANT) chance += 4u;
+      if (u_dir.x == 0 && u_dir.y == -1) chance += 14u; // allow downward spread
+      else if (u_dir.y != 0) chance += 6u;
       if (r < chance) {
         bId = P_FIRE;
         bTemp = bTemp > T_FIRE ? bTemp : T_FIRE;
-        bData = 55u;
-        aData = aData < 80u ? 80u : aData; // keep fire alive near fuel
+        bData = 80u;
+        bMeta = 10u;
+        aData = max(aData, 120u); // keep fire alive near fuel
       }
     } else if (bId == P_FIRE && hasFlag(aF, FLAG_FLAMMABLE)) {
       uint chance = 18u + (aTemp > 170u ? 22u : 0u);
       if (aId == P_OIL) chance += 12u;
       else if (aId == P_PLANT) chance += 4u;
+      if (u_dir.x == 0 && u_dir.y == -1) chance += 10u;
+      else if (u_dir.y != 0) chance += 4u;
       if (r < chance) {
         aId = P_FIRE;
         aTemp = aTemp > T_FIRE ? aTemp : T_FIRE;
-        aData = 55u;
-        bData = bData < 80u ? 80u : bData;
+        aData = 80u;
+        aMeta = 10u;
+        bData = max(bData, 120u);
       }
     }
   }
@@ -848,7 +898,8 @@ void main() {
       if (rA < chance) {
         bId = P_FIRE;
         bTemp = bTemp > T_FIRE ? bTemp : T_FIRE;
-        bData = 45u;
+        bData = 70u;
+        bMeta = 10u;
         aData = aData > 80u ? (aData - 80u) : 0u;
         aMeta = 12u;
       }
@@ -857,7 +908,8 @@ void main() {
       if (rB < chance) {
         aId = P_FIRE;
         aTemp = aTemp > T_FIRE ? aTemp : T_FIRE;
-        aData = 45u;
+        aData = 70u;
+        aMeta = 10u;
         bData = bData > 80u ? (bData - 80u) : 0u;
         bMeta = 12u;
       }
@@ -898,7 +950,8 @@ void main() {
       if (rA < 90u) {
         bId = P_FIRE;
         bTemp = bTemp > T_FIRE ? bTemp : T_FIRE;
-        bData = 40u;
+        bData = 70u;
+        bMeta = 10u;
         aId = P_EMPTY;
         aTemp = u_ambientTemp;
         aData = 0u;
@@ -908,7 +961,8 @@ void main() {
       if (rB < 90u) {
         aId = P_FIRE;
         aTemp = aTemp > T_FIRE ? aTemp : T_FIRE;
-        aData = 40u;
+        aData = 70u;
+        aMeta = 10u;
         bId = P_EMPTY;
         bTemp = u_ambientTemp;
         bData = 0u;
@@ -951,8 +1005,13 @@ void main() {
         uint aD = aP.r;
         uint bD = bP.r;
         if (aD > bD) {
+          bool bPinnedFire = (bId == P_FIRE) && (bMeta != 0u);
+          bool aIsGasEnergy = hasFlag(aF, FLAG_GAS) || hasFlag(aF, FLAG_ENERGY);
+          if (bPinnedFire && aIsGasEnergy) {
+            // Keep newly-ignited flames anchored so they can spread into adjacent fuel.
+          }
           // Prevent "falling sideways": only allow diagonal fall if straight-down is blocked.
-          if (diagonalPass && canFallDown(aC, aId, aP, aF)) {
+          else if (diagonalPass && canFallDown(aC, aId, aP, aF)) {
             // no swap
           } else {
             uint r = randByte(uvec2(aC), 251u + u_passSalt);
@@ -1010,14 +1069,14 @@ void main() {
           }
         } else {
           // Non-liquid fluids diffuse more gently (mainly into air).
-          if (aId == P_EMPTY && !bPowder && isFluid(bF) && bId != P_EMPTY) {
+          if (aId == P_EMPTY && !bPowder && isFluid(bF) && bId != P_EMPTY && !(bId == P_FIRE && bMeta != 0u)) {
             uint r = randByte(uvec2(aC), 91u + u_passSalt);
             if (r < (bP.a >> 1)) {
               uvec4 tmp = a;
               a = b;
               b = tmp;
             }
-          } else if (bId == P_EMPTY && !aPowder && isFluid(aF) && aId != P_EMPTY) {
+          } else if (bId == P_EMPTY && !aPowder && isFluid(aF) && aId != P_EMPTY && !(aId == P_FIRE && aMeta != 0u)) {
             uint r = randByte(uvec2(aC), 93u + u_passSalt);
             if (r < (aP.a >> 1)) {
               uvec4 tmp = a;
@@ -1104,7 +1163,7 @@ void main() {
 
         // Meaningful single-cell interactions for "add" mode.
         if (s.r == P_FIRE && (curId == P_PLANT || curId == P_OIL)) {
-          nextCell = uvec4(P_FIRE, max(cur.g, 245u), 55u, 0u);
+          nextCell = uvec4(P_FIRE, max(cur.g, 245u), 80u, 10u);
           changed = true;
         } else if (s.r == P_WATER && curId == P_DIRT) {
           nextCell = uvec4(P_MUD, (cur.g + s.g) >> 1, 200u, 0u);
@@ -1210,7 +1269,7 @@ uvec4 makeCell(uint id) {
   if (id == P_MUD) data = 200u;
   else if (id == P_ACID) data = 180u;
   else if (id == P_LAVA) temp = 250u;
-  else if (id == P_FIRE) { temp = 245u; data = 50u; }
+  else if (id == P_FIRE) { temp = 245u; data = 80u; }
   else if (id == P_SMOKE) { temp = 170u; data = 140u; }
   else if (id == P_STEAM) { temp = 205u; data = 170u; }
   else if (id == P_PLANT) { data = 120u; meta = 32u; }

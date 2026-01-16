@@ -274,7 +274,7 @@ export const DEFAULT_AMBIENT_TEMP = 128;
 export function defaultCellForParticle(id) {
   switch (id) {
     case Particle.FIRE:
-      return { temp: 245, data: 50, flags: 0 };
+      return { temp: 245, data: 80, flags: 0 };
     case Particle.SMOKE:
       return { temp: 170, data: 140, flags: 0 };
     case Particle.STEAM:
