@@ -38,6 +38,7 @@ const stepsPerFrame = /** @type {HTMLInputElement} */ (document.getElementById("
 const viewSelect = /** @type {HTMLSelectElement} */ (document.getElementById("viewSelect"));
 const resSelect = /** @type {HTMLSelectElement} */ (document.getElementById("resSelect"));
 const pasteEdgeStone = /** @type {HTMLInputElement} */ (document.getElementById("pasteEdgeStone"));
+const pasteBtn = /** @type {HTMLButtonElement} */ (document.getElementById("pasteBtn"));
 const addMode = /** @type {HTMLInputElement} */ (document.getElementById("addMode"));
 const levelHintEl = /** @type {HTMLElement} */ (document.getElementById("levelHint"));
 const helpModal = /** @type {HTMLDivElement} */ (document.getElementById("helpModal"));
@@ -343,6 +344,8 @@ function setActiveLevel(levelId) {
   levelSelect.value = next.id;
   particleSelect.disabled = !isSandbox;
   resSelect.disabled = !isSandbox;
+  pasteEdgeStone.disabled = !isSandbox;
+  pasteBtn.disabled = !isSandbox;
   clearBtn.textContent = isSandbox ? "Clear" : "Restart";
   levelHintEl.textContent = isSandbox ? "" : next.hints.join(" ");
 
@@ -418,36 +421,24 @@ async function decodeImageBlob(blob) {
   }
 }
 
-window.addEventListener("paste", async (e) => {
-  const active = document.activeElement;
-  if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement || active instanceof HTMLSelectElement) return;
+/**
+ * @param {Blob} blob
+ * @param {{noScale?: boolean} | undefined} [opts]
+ */
+async function pasteImageBlob(blob, opts) {
+  if (!sim) return;
   if (activeLevel.id !== LEVEL_ID.SANDBOX) {
     toast("paste disabled in levels", 1600);
     return;
   }
 
-  const data = e.clipboardData;
-  if (!data) return;
-
-  /** @type {File | null} */
-  let file = null;
-  for (let i = 0; i < data.items.length; i++) {
-    const item = data.items[i];
-    if (item.type && item.type.startsWith("image/")) {
-      file = item.getAsFile();
-      if (file) break;
-    }
-  }
-  if (!file) return;
-
-  e.preventDefault();
-  toast("pasting image…", 1200);
+  const noScale = opts?.noScale ?? false;
 
   try {
-    const { source, width: srcW, height: srcH, cleanup } = await decodeImageBlob(file);
+    const { source, width: srcW, height: srcH, cleanup } = await decodeImageBlob(blob);
     const maxW = Math.max(1, sim.width - 2);
     const maxH = Math.max(1, sim.height - 1);
-    const scale = e.shiftKey ? 1 : Math.min(1, maxW / Math.max(1, srcW), maxH / Math.max(1, srcH));
+    const scale = noScale ? 1 : Math.min(1, maxW / Math.max(1, srcW), maxH / Math.max(1, srcH));
     const w = clamp(Math.max(1, Math.round(srcW * scale)), 1, maxW);
     const h = clamp(Math.max(1, Math.round(srcH * scale)), 1, maxH);
 
@@ -473,11 +464,111 @@ window.addEventListener("paste", async (e) => {
 
     // @ts-ignore - OffscreenCanvas is a valid CanvasImageSource at runtime.
     sim.stampImage(offscreen, w, h, ox, oy, { edgeStone: pasteEdgeStone.checked, addMode: addMode.checked });
-    toast(`pasted ${srcW}×${srcH} → ${w}×${h}`, 2600);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     toast(`paste failed: ${msg}`, 3000);
   }
+}
+
+/**
+ * @returns {Promise<Blob | null>}
+ */
+async function readClipboardImageBlob() {
+  const cb = navigator.clipboard;
+  if (!cb) return null;
+  // @ts-ignore - clipboard.read isn't available in all TS libs.
+  if (typeof cb.read !== "function") return null;
+
+  /** @type {any[]} */
+  // @ts-ignore - clipboard.read isn't available in all TS libs.
+  const items = await cb.read();
+  for (const item of items) {
+    /** @type {string[]} */
+    const types = item.types ?? [];
+    for (const t of types) {
+      if (typeof t === "string" && t.startsWith("image/")) {
+        // @ts-ignore - ClipboardItem#getType exists at runtime.
+        return await item.getType(t);
+      }
+    }
+  }
+  return null;
+}
+
+const pasteFileInput = document.createElement("input");
+pasteFileInput.type = "file";
+pasteFileInput.accept = "image/*";
+pasteFileInput.tabIndex = -1;
+pasteFileInput.style.position = "fixed";
+pasteFileInput.style.left = "-10000px";
+pasteFileInput.style.top = "0";
+pasteFileInput.setAttribute("aria-hidden", "true");
+document.body.appendChild(pasteFileInput);
+
+pasteFileInput.addEventListener("change", async () => {
+  const file = pasteFileInput.files && pasteFileInput.files[0] ? pasteFileInput.files[0] : null;
+  pasteFileInput.value = "";
+  if (!file) return;
+  await pasteImageBlob(file);
+});
+
+pasteBtn.addEventListener("click", async (e) => {
+  if (activeLevel.id !== LEVEL_ID.SANDBOX) {
+    toast("paste disabled in levels", 1600);
+    return;
+  }
+
+  setSettingsOpen(false);
+
+  const isCoarse = window.matchMedia("(pointer: coarse)").matches;
+  const cb = navigator.clipboard;
+  // @ts-ignore - clipboard.read isn't available in all TS libs.
+  const canRead = !!cb && typeof cb.read === "function";
+  if (canRead) {
+    try {
+      const blob = await readClipboardImageBlob();
+      if (!blob) {
+        toast("clipboard has no image", 2000);
+        if (isCoarse) pasteFileInput.click();
+        return;
+      }
+      await pasteImageBlob(blob, { noScale: e.shiftKey });
+      return;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast(`clipboard blocked: ${msg}`, 2000);
+      if (isCoarse) pasteFileInput.click();
+      return;
+    }
+  }
+
+  pasteFileInput.click();
+});
+
+window.addEventListener("paste", async (e) => {
+  const active = document.activeElement;
+  if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement || active instanceof HTMLSelectElement) return;
+  if (activeLevel.id !== LEVEL_ID.SANDBOX) {
+    toast("paste disabled in levels", 1600);
+    return;
+  }
+
+  const data = e.clipboardData;
+  if (!data) return;
+
+  /** @type {File | null} */
+  let file = null;
+  for (let i = 0; i < data.items.length; i++) {
+    const item = data.items[i];
+    if (item.type && item.type.startsWith("image/")) {
+      file = item.getAsFile();
+      if (file) break;
+    }
+  }
+  if (!file) return;
+
+  e.preventDefault();
+  await pasteImageBlob(file, { noScale: e.shiftKey });
 });
 
 window.addEventListener("keydown", (e) => {
