@@ -99,8 +99,8 @@ function createSteamElevatorLevel(particleDefs) {
     allowedPaintIds: [Particle.STONE],
     budget: 4200,
     paintCost: (radius) => Math.max(1, Math.round((radius * radius) / 8)),
-    goal: { x: 226, y: 83, wantId: Particle.WATER, stableChecks: 4 },
-    hints: ["Goal: get water into the cup.", "Stone only (erase allowed).", "Tip: erase the intake plug; seal the leak vent."],
+    goal: { x: 228, y: 91, wantId: Particle.WATER, stableChecks: 3 },
+    hints: ["Goal: condense water in the condenser.", "Stone only (erase allowed).", "Tip: patch the riser vent + pipe roof leak (T shows heat)."],
     buildStamp: () => {
       const w = size.width;
       const h = size.height;
@@ -129,43 +129,40 @@ function createSteamElevatorLevel(particleDefs) {
       }
 
       // --- Stone structure (draw solid, then carve) ---
-      // Reservoir.
-      fill(stone, 8, 1, 80, 38);
-      fill(air, 9, 2, 79, 38); // open top
+      // Boiler (water) + heater (lava) separated by a 1-tile stone wall.
+      fill(stone, 10, 1, 95, 30);
+      fill(air, 11, 2, 94, 29);
 
-      // Riser (elevator shaft).
-      fill(stone, 150, 1, 156, 112);
-      fill(air, 151, 2, 155, 111);
+      fill(stone, 95, 1, 120, 30);
+      fill(air, 96, 2, 119, 29);
 
-      // Heater pocket (lava behind a thin stone wall).
-      fill(stone, 130, 12, 149, 34);
-      fill(air, 131, 13, 149, 33);
+      // Riser (steam elevator).
+      fill(stone, 40, 30, 60, 120);
+      fill(air, 41, 31, 59, 119);
+      fill(air, 44, 30, 56, 30); // boiler -> riser opening
 
-      // Intake pipe from reservoir -> riser (starts blocked by a plug).
-      fill(stone, 80, 6, 150, 10);
-      fill(air, 80, 7, 150, 9);
-      fill(stone, 115, 7, 117, 9); // plug: erase to open
+      // Horizontal pipe to the condenser.
+      fill(stone, 60, 115, 200, 119);
+      fill(air, 61, 116, 199, 118);
+      fill(air, 60, 116, 60, 118); // riser -> pipe opening
 
-      // Leak vent (must be sealed to reach the outlet).
-      fill(air, 156, 96, 156, 98);
+      // Condenser: connected high so condensed water can't fall back.
+      fill(stone, 200, 90, 246, 119);
+      fill(air, 201, 91, 245, 118);
+      fill(air, 200, 116, 200, 118); // pipe -> condenser opening
 
-      // Outlet pipe to the goal cup.
-      fill(stone, 156, 99, 210, 103);
-      fill(air, 156, 100, 210, 102);
+      // Riser vent (seal it).
+      fill(air, 40, 86, 40, 92);
 
-      // Goal cup.
-      fill(stone, 210, 82, 242, 104);
-      fill(air, 211, 83, 241, 104); // open top
+      // Pipe roof leak (seal it).
+      fill(air, 120, 119, 140, 119);
 
       // --- Fluids ---
-      // Reservoir water supply.
-      fill(water, 9, 2, 79, 22);
-
-      // Prime the riser with a little water.
-      fill(water, 151, 2, 155, 8);
+      // Boiler water.
+      fill(water, 11, 2, 94, 10);
 
       // Lava heat source.
-      fill(lava, 131, 13, 149, 24);
+      fill(lava, 96, 2, 119, 28);
 
       return { source: canvas, width: w, height: h, originX: 0, originY: 0 };
     },
