@@ -24,6 +24,15 @@ function setText(el, msg) {
   el.textContent = msg;
 }
 
+/**
+ * Writes a persistent hint message (replaces transient toasts).
+ * @param {string} msg
+ */
+function notify(msg) {
+  setText(hintStatusEl, msg);
+  hintStatusEl.title = msg;
+}
+
 const canvas = /** @type {HTMLCanvasElement} */ (document.getElementById("canvas"));
 const cursorCanvas = /** @type {HTMLCanvasElement} */ (document.getElementById("cursorCanvas"));
 const statusEl = /** @type {HTMLElement} */ (document.getElementById("status"));
@@ -156,7 +165,7 @@ function paintAt(x, y, mode) {
     if (remainingBudget !== null) {
       const cost = activeLevel.paintCost(radius);
       if (remainingBudget < cost) {
-        toast("out of budget", 1400);
+        notify("out of budget");
         return;
       }
       remainingBudget -= cost;
@@ -286,8 +295,6 @@ syncRangeReadouts();
 let lastNow = performance.now();
 let fps = 60;
 let lastStatusNow = 0;
-let toastMsg = "";
-let toastUntil = 0;
 
 /**
  * @param {number} v
@@ -296,15 +303,6 @@ let toastUntil = 0;
  */
 function clamp(v, lo, hi) {
   return v < lo ? lo : v > hi ? hi : v;
-}
-
-/**
- * @param {string} msg
- * @param {number} ms
- */
-function toast(msg, ms = 2200) {
-  toastMsg = msg;
-  toastUntil = performance.now() + ms;
 }
 
 /**
@@ -348,7 +346,6 @@ function setActiveLevel(levelId) {
   sim.stampImage(source, width, height, originX, originY, { edgeStone: false, addMode: false });
 
   particleSelect.value = String(next.allowedPaintIds[0] ?? Particle.STONE);
-  toast(`${next.name}`, 1400);
 }
 
 setActiveLevel(levelSelect.value);
@@ -407,7 +404,7 @@ async function decodeImageBlob(blob) {
 async function pasteImageBlob(blob, opts) {
   if (!sim) return;
   if (activeLevel.id !== LEVEL_ID.SANDBOX) {
-    toast("paste disabled in levels", 1600);
+    notify("paste disabled in levels");
     return;
   }
 
@@ -445,7 +442,7 @@ async function pasteImageBlob(blob, opts) {
     sim.stampImage(offscreen, w, h, ox, oy, { edgeStone: pasteEdgeStone.checked, addMode: addMode.checked });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    toast(`paste failed: ${msg}`, 3000);
+    notify(`paste failed: ${msg}`);
   }
 }
 
@@ -493,7 +490,7 @@ pasteFileInput.addEventListener("change", async () => {
 
 pasteBtn.addEventListener("click", async (e) => {
   if (activeLevel.id !== LEVEL_ID.SANDBOX) {
-    toast("paste disabled in levels", 1600);
+    notify("paste disabled in levels");
     return;
   }
 
@@ -507,7 +504,7 @@ pasteBtn.addEventListener("click", async (e) => {
     try {
       const blob = await readClipboardImageBlob();
       if (!blob) {
-        toast("clipboard has no image", 2000);
+        notify("clipboard has no image");
         if (isCoarse) pasteFileInput.click();
         return;
       }
@@ -515,7 +512,7 @@ pasteBtn.addEventListener("click", async (e) => {
       return;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      toast(`clipboard blocked: ${msg}`, 2000);
+      notify(`clipboard blocked: ${msg}`);
       if (isCoarse) pasteFileInput.click();
       return;
     }
@@ -528,7 +525,7 @@ window.addEventListener("paste", async (e) => {
   const active = document.activeElement;
   if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement || active instanceof HTMLSelectElement) return;
   if (activeLevel.id !== LEVEL_ID.SANDBOX) {
-    toast("paste disabled in levels", 1600);
+    notify("paste disabled in levels");
     return;
   }
 
@@ -563,7 +560,6 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "a" || e.key === "A") {
     e.preventDefault();
     addMode.checked = !addMode.checked;
-    toast(addMode.checked ? "add mode: on" : "add mode: off", 1200);
     return;
   }
 
@@ -655,7 +651,7 @@ function loop(now) {
       levelComplete = true;
       running = false;
       playPauseBtn.textContent = "Play";
-      toast("level complete", 4000);
+      notify("level complete");
     }
   }
 
@@ -667,11 +663,10 @@ function loop(now) {
   fps = fps * 0.9 + (1000 / Math.max(1, dt)) * 0.1;
   if (now - lastStatusNow > 180) {
     lastStatusNow = now;
-    const msg = now < toastUntil && toastMsg ? ` • ${toastMsg}` : "";
     const lvl = activeLevel.id === LEVEL_ID.SANDBOX ? "" : ` • ${activeLevel.name}`;
     const budget = remainingBudget === null ? "" : ` • stone ${remainingBudget}`;
     const done = levelComplete ? " • complete" : "";
-    const statusText = `${sim.width}×${sim.height}${lvl}${budget}${done} • tick ${sim.tick} • ${fps.toFixed(0)} fps${msg}`;
+    const statusText = `${sim.width}×${sim.height}${lvl}${budget}${done} • tick ${sim.tick} • ${fps.toFixed(0)} fps`;
     setText(statusEl, statusText);
     statusEl.title = statusText;
   }
