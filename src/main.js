@@ -54,6 +54,7 @@ const levelSelect = /** @type {HTMLSelectElement} */ (document.getElementById("l
 const particleSelect = /** @type {HTMLSelectElement} */ (document.getElementById("particleSelect"));
 const brushSize = /** @type {HTMLInputElement} */ (document.getElementById("brushSize"));
 const stepsPerFrame = /** @type {HTMLInputElement} */ (document.getElementById("stepsPerFrame"));
+const zoomInput = /** @type {HTMLInputElement} */ (document.getElementById("zoom"));
 const viewSelect = /** @type {HTMLSelectElement} */ (document.getElementById("viewSelect"));
 const resSelect = /** @type {HTMLSelectElement} */ (document.getElementById("resSelect"));
 const pasteEdgeStone = /** @type {HTMLInputElement} */ (document.getElementById("pasteEdgeStone"));
@@ -69,6 +70,7 @@ const settingsBtn = /** @type {HTMLButtonElement} */ (document.getElementById("s
 const settingsPanel = /** @type {HTMLDivElement} */ (document.getElementById("settingsPanel"));
 const brushSizeValue = /** @type {HTMLOutputElement | null} */ (document.getElementById("brushSizeValue"));
 const stepsPerFrameValue = /** @type {HTMLOutputElement | null} */ (document.getElementById("stepsPerFrameValue"));
+const zoomValue = /** @type {HTMLOutputElement | null} */ (document.getElementById("zoomValue"));
 const topbar = /** @type {HTMLElement | null} */ (document.querySelector("header.topbar"));
 
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
@@ -140,6 +142,25 @@ const cursor = { x: Math.floor(sim.width / 2), y: Math.floor(sim.height / 2), ha
 /** @type {StampState | null} */
 let stamp = null;
 
+const camera = { centerX: 0.5, centerY: 0.5, zoom: 1.0 };
+/** @type {{down: boolean, pointerId: number, startX: number, startY: number, startCenterX: number, startCenterY: number}} */
+const pan = { down: false, pointerId: -1, startX: 0, startY: 0, startCenterX: 0.5, startCenterY: 0.5 };
+
+/** @type {Map<number, {x: number, y: number}>} */
+const touchPoints = new Map();
+/** @type {null | {startDist: number, startZoom: number, worldU: number, worldV: number}} */
+let pinch = null;
+
+function clampCamera() {
+  camera.zoom = clamp(Number(camera.zoom), 1, 8);
+  const halfU = 0.5 / camera.zoom;
+  camera.centerX = clamp(camera.centerX, halfU, 1 - halfU);
+  camera.centerY = clamp(camera.centerY, halfU, 1 - halfU);
+  sim.camCenterX = camera.centerX;
+  sim.camCenterY = camera.centerY;
+  sim.camZoom = camera.zoom;
+}
+
 /**
  * @param {PointerEvent} e
  * @returns {{x: number, y: number}}
@@ -148,9 +169,12 @@ function eventToGrid(e) {
   const rect = canvas.getBoundingClientRect();
   const nx = (e.clientX - rect.left) / rect.width;
   const ny = (e.clientY - rect.top) / rect.height;
-  const x = Math.floor(nx * sim.width);
-  const yTop = Math.floor(ny * sim.height);
-  const y = sim.height - 1 - yTop;
+  const su = clamp(nx, 0, 1);
+  const sv = clamp(1 - ny, 0, 1);
+  const u = (su - 0.5) / camera.zoom + camera.centerX;
+  const v = (sv - 0.5) / camera.zoom + camera.centerY;
+  const x = clampInt(Math.floor(u * sim.width), 0, sim.width - 1);
+  const y = clampInt(Math.floor(v * sim.height), 0, sim.height - 1);
   return { x, y };
 }
 
@@ -290,9 +314,51 @@ stampClearBtn.addEventListener("click", () => {
 });
 syncStampInputsFromState();
 
+zoomInput.addEventListener("input", () => {
+  camera.zoom = Number(zoomInput.value);
+  clampCamera();
+  syncRangeReadouts();
+});
+clampCamera();
+
 canvas.addEventListener("pointerdown", (e) => {
   canvas.setPointerCapture(e.pointerId);
   const { x, y } = eventToGrid(e);
+
+  if (e.pointerType === "touch") {
+    touchPoints.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (touchPoints.size >= 2) {
+      const pts = [...touchPoints.values()];
+      const a = pts[0];
+      const b = pts[1];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const dist = Math.max(1e-3, Math.hypot(dx, dy));
+      const rect = canvas.getBoundingClientRect();
+      const cx = (a.x + b.x) * 0.5;
+      const cy = (a.y + b.y) * 0.5;
+      const su = clamp((cx - rect.left) / rect.width, 0, 1);
+      const sv = clamp(1 - (cy - rect.top) / rect.height, 0, 1);
+      const worldU = (su - 0.5) / camera.zoom + camera.centerX;
+      const worldV = (sv - 0.5) / camera.zoom + camera.centerY;
+      pinch = { startDist: dist, startZoom: camera.zoom, worldU, worldV };
+      brush.down = false;
+      e.preventDefault();
+      return;
+    }
+  }
+
+  if (e.button === 1) {
+    // Middle mouse: pan camera (keep Alt for pick).
+    e.preventDefault();
+    pan.down = true;
+    pan.pointerId = e.pointerId;
+    pan.startX = e.clientX;
+    pan.startY = e.clientY;
+    pan.startCenterX = camera.centerX;
+    pan.startCenterY = camera.centerY;
+    return;
+  }
 
   if (stampMode.checked && stamp && e.button === 0 && !e.shiftKey && !e.altKey) {
     if (activeLevel.id !== LEVEL_ID.SANDBOX) return;
@@ -301,7 +367,7 @@ canvas.addEventListener("pointerdown", (e) => {
     return;
   }
 
-  const wantsPick = e.button === 1 || e.altKey;
+  const wantsPick = e.altKey;
   if (wantsPick) {
     if (activeLevel.id !== LEVEL_ID.SANDBOX) return;
     const cell = sim.readCell(x, y);
@@ -318,6 +384,42 @@ canvas.addEventListener("pointerdown", (e) => {
 });
 
 canvas.addEventListener("pointermove", (e) => {
+  if (e.pointerType === "touch" && touchPoints.has(e.pointerId)) {
+    touchPoints.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinch && touchPoints.size >= 2) {
+      const pts = [...touchPoints.values()];
+      const a = pts[0];
+      const b = pts[1];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const dist = Math.max(1e-3, Math.hypot(dx, dy));
+      const rect = canvas.getBoundingClientRect();
+      const cx = (a.x + b.x) * 0.5;
+      const cy = (a.y + b.y) * 0.5;
+      const su = clamp((cx - rect.left) / rect.width, 0, 1);
+      const sv = clamp(1 - (cy - rect.top) / rect.height, 0, 1);
+
+      camera.zoom = clamp((pinch.startZoom * dist) / pinch.startDist, 1, 8);
+      camera.centerX = pinch.worldU - (su - 0.5) / camera.zoom;
+      camera.centerY = pinch.worldV - (sv - 0.5) / camera.zoom;
+      clampCamera();
+      zoomInput.value = String(camera.zoom);
+      syncRangeReadouts();
+      e.preventDefault();
+      return;
+    }
+  }
+
+  if (pan.down && e.pointerId === pan.pointerId) {
+    const rect = canvas.getBoundingClientRect();
+    const dx = (e.clientX - pan.startX) / Math.max(1, rect.width);
+    const dy = (e.clientY - pan.startY) / Math.max(1, rect.height);
+    camera.centerX = pan.startCenterX - dx / camera.zoom;
+    camera.centerY = pan.startCenterY + dy / camera.zoom;
+    clampCamera();
+    return;
+  }
+
   const { x, y } = eventToGrid(e);
   cursor.x = x;
   cursor.y = y;
@@ -337,6 +439,46 @@ canvas.addEventListener("pointercancel", endBrush);
 canvas.addEventListener("pointerleave", () => {
   cursor.has = false;
 });
+
+canvas.addEventListener("pointerup", (e) => {
+  if (pan.down && e.pointerId === pan.pointerId) pan.down = false;
+  if (e.pointerType === "touch") {
+    touchPoints.delete(e.pointerId);
+    if (touchPoints.size < 2) pinch = null;
+  }
+});
+canvas.addEventListener("pointercancel", (e) => {
+  if (pan.down && e.pointerId === pan.pointerId) pan.down = false;
+  if (e.pointerType === "touch") {
+    touchPoints.delete(e.pointerId);
+    if (touchPoints.size < 2) pinch = null;
+  }
+});
+
+canvas.addEventListener(
+  "wheel",
+  (e) => {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const nx = (e.clientX - rect.left) / rect.width;
+    const ny = (e.clientY - rect.top) / rect.height;
+    const su = clamp(nx, 0, 1);
+    const sv = clamp(1 - ny, 0, 1);
+
+    const worldU = (su - 0.5) / camera.zoom + camera.centerX;
+    const worldV = (sv - 0.5) / camera.zoom + camera.centerY;
+
+    const factor = Math.exp(-e.deltaY * 0.002);
+    camera.zoom = clamp(camera.zoom * factor, 1, 8);
+    camera.centerX = worldU - (su - 0.5) / camera.zoom;
+    camera.centerY = worldV - (sv - 0.5) / camera.zoom;
+    clampCamera();
+
+    zoomInput.value = String(camera.zoom);
+    syncRangeReadouts();
+  },
+  { passive: false },
+);
 
 let running = true;
 let stepOnce = false;
@@ -364,6 +506,7 @@ resSelect.addEventListener("change", () => {
   const { width, height } = parseRes(resSelect.value);
   sim.setWorldSize(width, height);
   if (stamp) setStampSize(stamp.w, stamp.h);
+  clampCamera();
 });
 
 levelSelect.addEventListener("change", () => {
@@ -406,6 +549,7 @@ window.addEventListener(
 function syncRangeReadouts() {
   if (brushSizeValue) brushSizeValue.textContent = brushSize.value;
   if (stepsPerFrameValue) stepsPerFrameValue.textContent = stepsPerFrame.value;
+  if (zoomValue) zoomValue.textContent = `${Number(camera.zoom).toFixed(1)}×`;
 }
 
 brushSize.addEventListener("input", syncRangeReadouts);
@@ -454,6 +598,7 @@ function setActiveLevel(levelId) {
     if (sim.width !== width || sim.height !== height) sim.setWorldSize(width, height);
     else sim.clear();
     if (stamp) setStampSize(stamp.w, stamp.h);
+    clampCamera();
     void autoStampPosterOnce();
     return;
   }
@@ -915,10 +1060,16 @@ function drawBrushCursor() {
   const x = clamp(cursor.x, 0, sim.width - 1);
   const y = clamp(cursor.y, 0, sim.height - 1);
 
-  const sx = w / sim.width;
-  const sy = h / sim.height;
-
+  const sx = (w * camera.zoom) / sim.width;
+  const sy = (h * camera.zoom) / sim.height;
   const cellPx = Math.max(1, Math.min(3, Math.round(Math.min(sx, sy))));
+
+  const u = (x + 0.5) / sim.width;
+  const v = (y + 0.5) / sim.height;
+  const su = (u - camera.centerX) * camera.zoom + 0.5;
+  const sv = (v - camera.centerY) * camera.zoom + 0.5;
+  const cx = su * w;
+  const cy = (1 - sv) * h;
 
   if (stampMode.checked && stamp) {
     const maxW = Math.max(1, sim.width - 2);
@@ -931,10 +1082,21 @@ function drawBrushCursor() {
     ox = clamp(ox, 1, sim.width - 1 - stampW0);
     oy = clamp(oy, 1, sim.height - stampH0);
 
-    const left = ox * sx;
-    const top = h - (oy + stampH0) * sy;
-    const bw = stampW0 * sx;
-    const bh = stampH0 * sy;
+    const u0 = ox / sim.width;
+    const v0 = oy / sim.height;
+    const u1 = (ox + stampW0) / sim.width;
+    const v1 = (oy + stampH0) / sim.height;
+    const su0 = (u0 - camera.centerX) * camera.zoom + 0.5;
+    const sv0 = (v0 - camera.centerY) * camera.zoom + 0.5;
+    const su1 = (u1 - camera.centerX) * camera.zoom + 0.5;
+    const sv1 = (v1 - camera.centerY) * camera.zoom + 0.5;
+
+    const left = su0 * w;
+    const right = su1 * w;
+    const top = (1 - sv1) * h;
+    const bottom = (1 - sv0) * h;
+    const bw = right - left;
+    const bh = bottom - top;
 
     cursorCtx.save();
     cursorCtx.beginPath();
@@ -956,9 +1118,6 @@ function drawBrushCursor() {
 
   const radius = Number(brushSize.value) | 0;
   if (radius <= 0) return;
-
-  const cx = (x + 0.5) * sx;
-  const cy = h - (y + 0.5) * sy;
 
   const rx = (radius + 0.5) * sx;
   const ry = (radius + 0.5) * sy;

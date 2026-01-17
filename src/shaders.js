@@ -641,8 +641,8 @@ void tryPlantGrow(
   // Air growth is where most "branching" is visible, so bias toward it a bit.
   if (tgtIsAir) {
     chance += 8u;
-    if (delta.y > 0) chance += 10u;
-    else if (delta.y == 0) chance += 6u;
+    if (delta.y > 0) chance += (delta.x == 0 ? 8u : 14u);
+    else if (delta.y == 0) chance += 14u;
   }
 
   // Air growth prefers to attach to something instead of floating.
@@ -654,7 +654,7 @@ void tryPlantGrow(
       uint bf = loadProps(bid).b;
       supported = (bid != P_EMPTY) && !hasFlag(bf, FLAG_GAS) && !hasFlag(bf, FLAG_ENERGY);
     }
-    if (!supported && delta.y == 0) chance = (chance * 3u) >> 2;
+    if (!supported && delta.y == 0) chance = (chance * 7u) >> 3;
   }
 
   // Soil colonization is rarer unless it's wet.
@@ -1977,6 +1977,8 @@ uniform sampler2D u_palette;
 uniform ivec2 u_size;
 uniform int u_viewMode; // 0 material, 1 temperature
 uniform uint u_ambientTemp;
+uniform vec2 u_camCenter;
+uniform float u_camZoom;
 
 out vec4 outColor;
 
@@ -1994,7 +1996,7 @@ vec3 temperatureColor(float t) {
 }
 
 void main() {
-  vec2 uv = v_uv;
+  vec2 uv = (v_uv - vec2(0.5)) / max(u_camZoom, 1e-3) + u_camCenter;
   ivec2 c = ivec2(floor(uv * vec2(u_size)));
   c = clamp(c, ivec2(0), u_size - ivec2(1));
 
