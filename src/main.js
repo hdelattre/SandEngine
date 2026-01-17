@@ -106,6 +106,7 @@ levelHintEl.textContent = "";
 
 /** @type {GpuSim | null} */
 let sim = null;
+let didAutoPoster = false;
 
 try {
   const { width, height } = parseRes(resSelect.value);
@@ -453,6 +454,7 @@ function setActiveLevel(levelId) {
     if (sim.width !== width || sim.height !== height) sim.setWorldSize(width, height);
     else sim.clear();
     if (stamp) setStampSize(stamp.w, stamp.h);
+    void autoStampPosterOnce();
     return;
   }
 
@@ -483,6 +485,28 @@ function makeOffscreenCanvas(w, h) {
   c.width = w;
   c.height = h;
   return c;
+}
+
+/**
+ * @param {CanvasImageSource} source
+ * @param {number} srcW
+ * @param {number} srcH
+ * @param {number} dstW
+ * @param {number} dstH
+ * @returns {HTMLCanvasElement | OffscreenCanvas}
+ */
+function rasterizeToOffscreen(source, srcW, srcH, dstW, dstH) {
+  const out = makeOffscreenCanvas(dstW, dstH);
+  // @ts-ignore - OffscreenCanvas/HTMLCanvasElement share getContext at runtime.
+  const ctx = out.getContext("2d");
+  if (!ctx) throw new Error("2D canvas unavailable");
+  ctx.imageSmoothingEnabled = true;
+  // @ts-ignore - imageSmoothingQuality isn't in all TS libs.
+  if ("imageSmoothingQuality" in ctx) ctx.imageSmoothingQuality = "high";
+  ctx.clearRect(0, 0, dstW, dstH);
+  // @ts-ignore - CanvasImageSource is valid for drawImage.
+  ctx.drawImage(source, 0, 0, srcW, srcH, 0, 0, dstW, dstH);
+  return out;
 }
 
 /**
@@ -519,6 +543,44 @@ async function decodeImageBlob(blob) {
   }
 }
 
+async function autoStampPosterOnce() {
+  if (didAutoPoster) return;
+  didAutoPoster = true;
+  if (!sim) return;
+  if (activeLevel.id !== LEVEL_ID.SANDBOX) return;
+
+  const urls = ["./assets/poster.jpg", "./assets/poster.png"];
+  let res = null;
+  for (const url of urls) {
+    try {
+      const r = await fetch(url, { cache: "force-cache" });
+      if (r.ok) {
+        res = r;
+        break;
+      }
+    } catch {
+      // ignore and try next
+    }
+  }
+  if (!res) return;
+
+  try {
+    const blob = await res.blob();
+    const { source, width: srcW, height: srcH, cleanup } = await decodeImageBlob(blob);
+
+    const w = Math.max(1, sim.width - 2);
+    const h = Math.max(1, sim.height - 1);
+    const offscreen = rasterizeToOffscreen(source, srcW, srcH, w, h);
+
+    if (cleanup) cleanup();
+
+    // @ts-ignore - OffscreenCanvas is a valid CanvasImageSource at runtime.
+    sim.stampImage(offscreen, w, h, 1, 1, { edgeStone: pasteEdgeStone.checked, addMode: false });
+  } catch {
+    // silent: poster is optional
+  }
+}
+
 /**
  * @param {Blob} blob
  * @param {{noScale?: boolean} | undefined} [opts]
@@ -539,16 +601,7 @@ async function loadStampFromBlob(blob, opts) {
   const baseW = clampInt(Math.max(1, Math.round(srcW * initialScale)), 1, maxW);
   const baseH = clampInt(Math.max(1, Math.round(srcH * initialScale)), 1, maxH);
 
-  const base = makeOffscreenCanvas(baseW, baseH);
-  // @ts-ignore - OffscreenCanvas/HTMLCanvasElement share getContext at runtime.
-  const ctx = base.getContext("2d");
-  if (!ctx) throw new Error("2D canvas unavailable");
-  ctx.imageSmoothingEnabled = true;
-  // @ts-ignore - imageSmoothingQuality isn't in all TS libs.
-  if ("imageSmoothingQuality" in ctx) ctx.imageSmoothingQuality = "high";
-  ctx.clearRect(0, 0, baseW, baseH);
-  // @ts-ignore - CanvasImageSource is valid for drawImage.
-  ctx.drawImage(source, 0, 0, baseW, baseH);
+  const base = rasterizeToOffscreen(source, srcW, srcH, baseW, baseH);
 
   if (cleanup) cleanup();
 
@@ -584,16 +637,7 @@ function placeStampAt(x, y) {
     return;
   }
 
-  const out = makeOffscreenCanvas(clampedW, clampedH);
-  // @ts-ignore - OffscreenCanvas/HTMLCanvasElement share getContext at runtime.
-  const ctx = out.getContext("2d");
-  if (!ctx) return;
-  ctx.imageSmoothingEnabled = true;
-  // @ts-ignore - imageSmoothingQuality isn't in all TS libs.
-  if ("imageSmoothingQuality" in ctx) ctx.imageSmoothingQuality = "high";
-  ctx.clearRect(0, 0, clampedW, clampedH);
-  // @ts-ignore - CanvasImageSource is valid for drawImage.
-  ctx.drawImage(stamp.base, 0, 0, stamp.srcW, stamp.srcH, 0, 0, clampedW, clampedH);
+  const out = rasterizeToOffscreen(stamp.base, stamp.srcW, stamp.srcH, clampedW, clampedH);
   // @ts-ignore - OffscreenCanvas is a valid CanvasImageSource at runtime.
   sim.stampImage(out, clampedW, clampedH, ox, oy, { edgeStone: pasteEdgeStone.checked, addMode: addMode.checked });
 }
