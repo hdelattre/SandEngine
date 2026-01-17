@@ -538,17 +538,23 @@ void tryPlantGrow(
   inout uint tgtMeta,
   uint salt
 ) {
-  if (plantId != P_PLANT || tgtId != P_EMPTY) return;
+  if (plantId != P_PLANT) return;
+
+  bool tgtIsAir = (tgtId == P_EMPTY);
+  bool tgtIsSoil = (tgtId == P_DIRT) || (tgtId == P_MUD);
+  if (!(tgtIsAir || tgtIsSoil)) return;
 
   uint dir = plantMeta & 7u;
   uint gene = (plantMeta >> 3u) & 7u;
   uint cd = (plantMeta >> 6u) & 3u;
 
   if (cd != 0u) return;
-  if (plantData < 170u) return;
+  uint minEnergy = tgtIsSoil ? 160u : 130u;
+  if (plantData < minEnergy) return;
   if (plantTemp > 220u) return;
   if (tgtTemp > 220u) return;
 
+  ivec2 tgtC = plantC + delta;
   int dIdx = dirIndexFromDelta(delta);
   int diff = cycDiff8(dIdx, int(dir));
 
@@ -565,13 +571,112 @@ void tryPlantGrow(
   // Root growth is possible but rarer.
   if (dIdx == 4 || dIdx == 3 || dIdx == 5) chance = (chance * 3u) >> 2;
 
-  chance += (plantData - 170u) >> 3; // 0..10
-  chance = min(chance, 92u);
+  // Don't grow upward into soil.
+  if (tgtIsSoil && (dIdx == 0 || dIdx == 1 || dIdx == 7)) return;
+
+  // Nearby context makes growth feel more organic.
+  uint plantNeighbors = 0u;
+  bool exposed = false;
+  bool nearWater = false;
+
+  ivec2 n;
+
+  n = plantC + ivec2(1, 0);
+  if (inBounds(n)) {
+    uint nid = loadState(n).r;
+    uint nf = loadProps(nid).b;
+    if (nid == P_PLANT) plantNeighbors += 1u;
+    if (nid == P_EMPTY || hasFlag(nf, FLAG_GAS) || hasFlag(nf, FLAG_ENERGY)) exposed = true;
+    if (nid == P_WATER || nid == P_BRINE || nid == P_MUD) nearWater = true;
+  }
+  n = plantC + ivec2(-1, 0);
+  if (inBounds(n)) {
+    uint nid = loadState(n).r;
+    uint nf = loadProps(nid).b;
+    if (nid == P_PLANT) plantNeighbors += 1u;
+    if (nid == P_EMPTY || hasFlag(nf, FLAG_GAS) || hasFlag(nf, FLAG_ENERGY)) exposed = true;
+    if (nid == P_WATER || nid == P_BRINE || nid == P_MUD) nearWater = true;
+  }
+  n = plantC + ivec2(0, 1);
+  if (inBounds(n)) {
+    uint nid = loadState(n).r;
+    uint nf = loadProps(nid).b;
+    if (nid == P_PLANT) plantNeighbors += 1u;
+    if (nid == P_EMPTY || hasFlag(nf, FLAG_GAS) || hasFlag(nf, FLAG_ENERGY)) exposed = true;
+    if (nid == P_WATER || nid == P_BRINE || nid == P_MUD) nearWater = true;
+  }
+  n = plantC + ivec2(0, -1);
+  if (inBounds(n)) {
+    uint nid = loadState(n).r;
+    uint nf = loadProps(nid).b;
+    if (nid == P_PLANT) plantNeighbors += 1u;
+    if (nid == P_EMPTY || hasFlag(nf, FLAG_GAS) || hasFlag(nf, FLAG_ENERGY)) exposed = true;
+    if (nid == P_WATER || nid == P_BRINE || nid == P_MUD) nearWater = true;
+  }
+
+  // Diagonals only influence the "tip" metric.
+  n = plantC + ivec2(1, 1); if (inBounds(n) && loadState(n).r == P_PLANT) plantNeighbors += 1u;
+  n = plantC + ivec2(-1, 1); if (inBounds(n) && loadState(n).r == P_PLANT) plantNeighbors += 1u;
+  n = plantC + ivec2(1, -1); if (inBounds(n) && loadState(n).r == P_PLANT) plantNeighbors += 1u;
+  n = plantC + ivec2(-1, -1); if (inBounds(n) && loadState(n).r == P_PLANT) plantNeighbors += 1u;
+
+  // Tips branch more aggressively; dense clusters slow down.
+  if (plantNeighbors <= 1u) chance += 18u;
+  else if (plantNeighbors == 2u) chance += 8u;
+  else if (plantNeighbors >= 5u) chance = chance > 10u ? (chance - 10u) : 0u;
+
+  // Light/exposure biases shoots up; buried plant biases roots.
+  if (exposed) {
+    if (delta.y > 0) chance += 14u;
+    else if (delta.y == 0) chance += 4u;
+  } else {
+    if (tgtIsSoil || delta.y < 0) chance += 10u;
+    else chance = (chance * 3u) >> 2;
+  }
+
+  // Water nearby makes all growth more likely; without it, shoots are timid.
+  if (nearWater) chance += 6u;
+  else if (delta.y > 0 && plantData < (minEnergy + 64u)) chance = (chance * 3u) >> 2;
+
+  // Air growth is where most "branching" is visible, so bias toward it a bit.
+  if (tgtIsAir) {
+    chance += 8u;
+    if (delta.y > 0) chance += 10u;
+    else if (delta.y == 0) chance += 6u;
+  }
+
+  // Air growth prefers to attach to something instead of floating.
+  if (tgtIsAir) {
+    bool supported = false;
+    ivec2 below = tgtC + ivec2(0, -1);
+    if (inBounds(below)) {
+      uint bid = loadState(below).r;
+      uint bf = loadProps(bid).b;
+      supported = (bid != P_EMPTY) && !hasFlag(bf, FLAG_GAS) && !hasFlag(bf, FLAG_ENERGY);
+    }
+    if (!supported && delta.y == 0) chance = (chance * 3u) >> 2;
+  }
+
+  // Soil colonization is rarer unless it's wet.
+  if (tgtIsSoil) {
+    chance = (chance * 3u) >> 2;
+    if (tgtId == P_MUD) chance += 10u;
+    bool waterAdj = false;
+    n = tgtC + ivec2(1, 0); if (!waterAdj && inBounds(n)) { uint nid = loadState(n).r; waterAdj = (nid == P_WATER) || (nid == P_BRINE) || (nid == P_MUD); }
+    n = tgtC + ivec2(-1, 0); if (!waterAdj && inBounds(n)) { uint nid = loadState(n).r; waterAdj = (nid == P_WATER) || (nid == P_BRINE) || (nid == P_MUD); }
+    n = tgtC + ivec2(0, 1); if (!waterAdj && inBounds(n)) { uint nid = loadState(n).r; waterAdj = (nid == P_WATER) || (nid == P_BRINE) || (nid == P_MUD); }
+    n = tgtC + ivec2(0, -1); if (!waterAdj && inBounds(n)) { uint nid = loadState(n).r; waterAdj = (nid == P_WATER) || (nid == P_BRINE) || (nid == P_MUD); }
+    if (waterAdj) chance += 10u;
+  }
+
+  chance += (plantData - minEnergy) >> 4; // 0..~7
+  chance = min(chance, 140u);
 
   uint r = randByte(uvec2(plantC), salt);
   if (r >= chance) return;
 
-  uint give = 60u + gene * 6u;
+  uint give = 36u + gene * 7u;
+  if (tgtIsSoil) give += 18u;
   if (plantData <= give + 8u) return;
 
   plantData -= give;
@@ -587,7 +692,7 @@ void tryPlantGrow(
 
   tgtId = P_PLANT;
   tgtTemp = plantTemp;
-  tgtData = give;
+  tgtData = tgtIsSoil ? ((give * 3u) >> 2) : give;
   tgtMeta = packPlantMeta(uint(childDir), childGene, 2u);
 }
 
@@ -730,11 +835,104 @@ void selfUpdate(ivec2 c, inout uvec4 s, inout uint e, uint salt) {
       id = P_DIRT;
     }
   } else if (id == P_PLANT) {
-    // Plant energy decays, and growth cooldown counts down.
-    if (data > 0u) data -= 1u;
+    // Plant has a tiny lifecycle: consumes energy when stressed, gains a bit when exposed,
+    // and can die back into dirt/air when starved.
+    uint dir = meta & 7u;
+    uint gene = (meta >> 3u) & 7u;
     uint cd = (meta >> 6u) & 3u;
     if (cd > 0u) cd -= 1u;
-    meta = (meta & 63u) | (cd << 6u);
+
+    uint temp = tempFromEnergy(P_PLANT, e);
+
+    bool exposed = false;
+    bool nearWater = false;
+    bool nearSoil = false;
+    ivec2 n;
+
+    n = c + ivec2(1, 0);
+    if (inBounds(n)) {
+      uint nid = loadState(n).r;
+      uint nf = loadProps(nid).b;
+      if (nid == P_EMPTY || hasFlag(nf, FLAG_GAS) || hasFlag(nf, FLAG_ENERGY)) exposed = true;
+      if (nid == P_WATER || nid == P_BRINE || nid == P_MUD) nearWater = true;
+      if (nid == P_DIRT || nid == P_MUD) nearSoil = true;
+    }
+    n = c + ivec2(-1, 0);
+    if (inBounds(n)) {
+      uint nid = loadState(n).r;
+      uint nf = loadProps(nid).b;
+      if (nid == P_EMPTY || hasFlag(nf, FLAG_GAS) || hasFlag(nf, FLAG_ENERGY)) exposed = true;
+      if (nid == P_WATER || nid == P_BRINE || nid == P_MUD) nearWater = true;
+      if (nid == P_DIRT || nid == P_MUD) nearSoil = true;
+    }
+    n = c + ivec2(0, 1);
+    if (inBounds(n)) {
+      uint nid = loadState(n).r;
+      uint nf = loadProps(nid).b;
+      if (nid == P_EMPTY || hasFlag(nf, FLAG_GAS) || hasFlag(nf, FLAG_ENERGY)) exposed = true;
+      if (nid == P_WATER || nid == P_BRINE || nid == P_MUD) nearWater = true;
+      if (nid == P_DIRT || nid == P_MUD) nearSoil = true;
+    }
+    n = c + ivec2(0, -1);
+    if (inBounds(n)) {
+      uint nid = loadState(n).r;
+      uint nf = loadProps(nid).b;
+      if (nid == P_EMPTY || hasFlag(nf, FLAG_GAS) || hasFlag(nf, FLAG_ENERGY)) exposed = true;
+      if (nid == P_WATER || nid == P_BRINE || nid == P_MUD) nearWater = true;
+      if (nid == P_DIRT || nid == P_MUD) nearSoil = true;
+    }
+
+    // Baseline metabolism: costs more when cold/hot or dehydrated.
+    uint cost = 1u;
+    if (temp < 100u || temp > 205u) cost += 1u;
+    if (!nearWater) cost += 1u;
+    if (data > 0u) data = data > cost ? (data - cost) : 0u;
+
+    // Photosynthesis: small steady gain when exposed and in a comfortable temp range.
+    if (exposed && temp > 110u && temp < 190u) {
+      uint gain = 1u + (gene >> 2u);
+      if (nearWater) gain += 1u;
+      if (data < 240u) data = min(255u, data + gain);
+    }
+
+    // Slowly re-orient growth direction based on environment.
+    if (cd == 0u) {
+      uint r = randByte(uvec2(c), salt + 41u);
+      if (exposed) {
+        if (r < 28u) dir = (r < 16u) ? 0u : ((r < 22u) ? 1u : 7u); // up-biased
+      } else if (nearSoil || nearWater) {
+        if (r < 28u) dir = (r < 16u) ? 4u : ((r < 22u) ? 3u : 5u); // down-biased
+      } else {
+        if (r < 8u) dir = r & 7u;
+      }
+    }
+
+    bool alive = true;
+    if (data == 0u && !nearWater) {
+      uint r = randByte(uvec2(c), salt + 77u);
+      uint chance = exposed ? 10u : 4u;
+      if (temp < 90u || temp > 210u) chance += 10u;
+      if (r < chance) {
+        ivec2 below = c + ivec2(0, -1);
+        bool supported = false;
+        if (inBounds(below)) {
+          uint bid = loadState(below).r;
+          uint bf = loadProps(bid).b;
+          supported = (bid != P_EMPTY) && !hasFlag(bf, FLAG_GAS) && !hasFlag(bf, FLAG_ENERGY);
+        }
+        if (supported) {
+          id = P_DIRT;
+          e = energyForTemp(P_DIRT, temp);
+        } else {
+          id = P_EMPTY;
+          e = energyForTemp(P_EMPTY, u_ambientTemp);
+        }
+        meta = 0u;
+        alive = false;
+      }
+    }
+
+    if (alive) meta = packPlantMeta(dir, gene, cd);
   } else if (id == P_ACID) {
     // Acid slowly loses strength.
     if (data > 0u && (randByte(uvec2(c), salt) < 6u)) data -= 1u;
@@ -816,7 +1014,7 @@ void main() {
   // Plant energy exchange + refuel near water/soil.
   if (aId == P_PLANT && bId == P_PLANT) {
     int diff = int(aData) - int(bData);
-    int transfer = diff / 8;
+    int transfer = diff / 10;
     if (transfer != 0) {
       aData = clampU8(int(aData) - transfer);
       bData = clampU8(int(bData) + transfer);
@@ -824,17 +1022,17 @@ void main() {
   }
 
   if (aId == P_PLANT && bId == P_WATER) {
-    aData = min(255u, aData + 26u);
+    aData = min(255u, aData + 14u);
   } else if (bId == P_PLANT && aId == P_WATER) {
-    bData = min(255u, bData + 26u);
+    bData = min(255u, bData + 14u);
   } else if (aId == P_PLANT && bId == P_MUD) {
-    aData = min(255u, aData + 12u);
+    aData = min(255u, aData + 8u);
   } else if (bId == P_PLANT && aId == P_MUD) {
-    bData = min(255u, bData + 12u);
+    bData = min(255u, bData + 8u);
   } else if (aId == P_PLANT && bId == P_DIRT) {
-    aData = min(150u, aData + 2u);
+    aData = min(160u, aData + 1u);
   } else if (bId == P_PLANT && aId == P_DIRT) {
-    bData = min(150u, bData + 2u);
+    bData = min(160u, bData + 1u);
   }
 
   // Plant stress from salinity.
@@ -1183,11 +1381,11 @@ void main() {
   }
 
   // Plant grows with directional branching (metadata-driven).
-  if (aId == P_PLANT && bId == P_EMPTY) {
+  if (aId == P_PLANT && (bId == P_EMPTY || bId == P_DIRT || bId == P_MUD)) {
     uint prev = bId;
     tryPlantGrow(aC, u_dir, aId, aTemp, aData, aMeta, bId, bTemp, bData, bMeta, 201u + u_passSalt);
     if (prev != bId) bE = energyForTemp(bId, bTemp);
-  } else if (bId == P_PLANT && aId == P_EMPTY) {
+  } else if (bId == P_PLANT && (aId == P_EMPTY || aId == P_DIRT || aId == P_MUD)) {
     uint prev = aId;
     tryPlantGrow(bC, -u_dir, bId, bTemp, bData, bMeta, aId, aTemp, aData, aMeta, 203u + u_passSalt);
     if (prev != aId) aE = energyForTemp(aId, aTemp);
