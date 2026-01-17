@@ -58,6 +58,11 @@ const viewSelect = /** @type {HTMLSelectElement} */ (document.getElementById("vi
 const resSelect = /** @type {HTMLSelectElement} */ (document.getElementById("resSelect"));
 const pasteEdgeStone = /** @type {HTMLInputElement} */ (document.getElementById("pasteEdgeStone"));
 const pasteBtn = /** @type {HTMLButtonElement} */ (document.getElementById("pasteBtn"));
+const stampMode = /** @type {HTMLInputElement} */ (document.getElementById("stampMode"));
+const stampW = /** @type {HTMLInputElement} */ (document.getElementById("stampW"));
+const stampH = /** @type {HTMLInputElement} */ (document.getElementById("stampH"));
+const stampLock = /** @type {HTMLInputElement} */ (document.getElementById("stampLock"));
+const stampClearBtn = /** @type {HTMLButtonElement} */ (document.getElementById("stampClearBtn"));
 const addMode = /** @type {HTMLInputElement} */ (document.getElementById("addMode"));
 const levelHintEl = /** @type {HTMLElement} */ (document.getElementById("levelHint"));
 const settingsBtn = /** @type {HTMLButtonElement} */ (document.getElementById("settingsBtn"));
@@ -130,6 +135,10 @@ const brush = { down: false, x: 0, y: 0, lastX: 0, lastY: 0, mode: "paint" };
 /** @type {{x: number, y: number, has: boolean}} */
 const cursor = { x: Math.floor(sim.width / 2), y: Math.floor(sim.height / 2), has: false };
 
+/** @typedef {{base: HTMLCanvasElement | OffscreenCanvas, srcW: number, srcH: number, w: number, h: number}} StampState */
+/** @type {StampState | null} */
+let stamp = null;
+
 /**
  * @param {PointerEvent} e
  * @returns {{x: number, y: number}}
@@ -196,9 +205,100 @@ function paintAt(x, y, mode) {
   sim.paintCircle(x, y, { id, temp: base.temp, data: base.data, flags: base.flags }, radius, { addMode: doAdd });
 }
 
+/**
+ * @param {number} v
+ * @param {number} lo
+ * @param {number} hi
+ */
+function clampInt(v, lo, hi) {
+  v |= 0;
+  return v < lo ? lo : v > hi ? hi : v;
+}
+
+function syncStampInputsFromState() {
+  if (!stamp) {
+    stampMode.checked = false;
+    stampW.value = "";
+    stampH.value = "";
+    stampW.disabled = true;
+    stampH.disabled = true;
+    stampLock.disabled = true;
+    stampClearBtn.disabled = true;
+    stampMode.disabled = true;
+    return;
+  }
+
+  stampW.disabled = false;
+  stampH.disabled = false;
+  stampLock.disabled = false;
+  stampClearBtn.disabled = false;
+  stampMode.disabled = false;
+  stampW.value = String(stamp.w);
+  stampH.value = String(stamp.h);
+}
+
+function clearStamp() {
+  stamp = null;
+  syncStampInputsFromState();
+}
+
+/**
+ * @param {number} w
+ * @param {number} h
+ */
+function setStampSize(w, h) {
+  if (!stamp) return;
+  const maxW = Math.max(1, sim.width - 2);
+  const maxH = Math.max(1, sim.height - 1);
+  stamp.w = clampInt(w, 1, maxW);
+  stamp.h = clampInt(h, 1, maxH);
+  syncStampInputsFromState();
+}
+
+function onStampWInput() {
+  if (!stamp) return;
+  const w = Number(stampW.value) | 0;
+  if (!w) return;
+  if (stampLock.checked) {
+    const h = Math.max(1, Math.round((w * stamp.srcH) / Math.max(1, stamp.srcW)));
+    setStampSize(w, h);
+  } else {
+    setStampSize(w, stamp.h);
+  }
+}
+
+function onStampHInput() {
+  if (!stamp) return;
+  const h = Number(stampH.value) | 0;
+  if (!h) return;
+  if (stampLock.checked) {
+    const w = Math.max(1, Math.round((h * stamp.srcW) / Math.max(1, stamp.srcH)));
+    setStampSize(w, h);
+  } else {
+    setStampSize(stamp.w, h);
+  }
+}
+
+stampW.addEventListener("input", onStampWInput);
+stampH.addEventListener("input", onStampHInput);
+stampMode.addEventListener("change", () => {
+  if (!stamp) stampMode.checked = false;
+});
+stampClearBtn.addEventListener("click", () => {
+  clearStamp();
+});
+syncStampInputsFromState();
+
 canvas.addEventListener("pointerdown", (e) => {
   canvas.setPointerCapture(e.pointerId);
   const { x, y } = eventToGrid(e);
+
+  if (stampMode.checked && stamp && e.button === 0 && !e.shiftKey && !e.altKey) {
+    if (activeLevel.id !== LEVEL_ID.SANDBOX) return;
+    e.preventDefault();
+    placeStampAt(x, y);
+    return;
+  }
 
   const wantsPick = e.button === 1 || e.altKey;
   if (wantsPick) {
@@ -262,6 +362,7 @@ resSelect.addEventListener("change", () => {
   if (activeLevel.id !== LEVEL_ID.SANDBOX) return;
   const { width, height } = parseRes(resSelect.value);
   sim.setWorldSize(width, height);
+  if (stamp) setStampSize(stamp.w, stamp.h);
 });
 
 levelSelect.addEventListener("change", () => {
@@ -341,6 +442,8 @@ function setActiveLevel(levelId) {
   resSelect.disabled = !isSandbox;
   pasteEdgeStone.disabled = !isSandbox;
   pasteBtn.disabled = !isSandbox;
+  if (!isSandbox) clearStamp();
+  else syncStampInputsFromState();
   clearBtn.textContent = isSandbox ? "Clear" : "Restart";
   levelHintEl.textContent = isSandbox ? "" : next.hints.join(" ");
 
@@ -349,6 +452,7 @@ function setActiveLevel(levelId) {
     const { width, height } = parseRes(resSelect.value);
     if (sim.width !== width || sim.height !== height) sim.setWorldSize(width, height);
     else sim.clear();
+    if (stamp) setStampSize(stamp.w, stamp.h);
     return;
   }
 
@@ -419,7 +523,7 @@ async function decodeImageBlob(blob) {
  * @param {Blob} blob
  * @param {{noScale?: boolean} | undefined} [opts]
  */
-async function pasteImageBlob(blob, opts) {
+async function loadStampFromBlob(blob, opts) {
   if (!sim) return;
   if (activeLevel.id !== LEVEL_ID.SANDBOX) {
     notify("paste disabled in levels");
@@ -427,41 +531,71 @@ async function pasteImageBlob(blob, opts) {
   }
 
   const noScale = opts?.noScale ?? false;
+  const { source, width: srcW, height: srcH, cleanup } = await decodeImageBlob(blob);
 
-  try {
-    const { source, width: srcW, height: srcH, cleanup } = await decodeImageBlob(blob);
-    const maxW = Math.max(1, sim.width - 2);
-    const maxH = Math.max(1, sim.height - 1);
-    const scale = noScale ? 1 : Math.min(1, maxW / Math.max(1, srcW), maxH / Math.max(1, srcH));
-    const w = clamp(Math.max(1, Math.round(srcW * scale)), 1, maxW);
-    const h = clamp(Math.max(1, Math.round(srcH * scale)), 1, maxH);
+  const maxW = Math.max(1, sim.width - 2);
+  const maxH = Math.max(1, sim.height - 1);
+  const initialScale = noScale ? 1 : Math.min(1, maxW / Math.max(1, srcW), maxH / Math.max(1, srcH));
+  const baseW = clampInt(Math.max(1, Math.round(srcW * initialScale)), 1, maxW);
+  const baseH = clampInt(Math.max(1, Math.round(srcH * initialScale)), 1, maxH);
 
-    const offscreen = makeOffscreenCanvas(w, h);
-    // @ts-ignore - OffscreenCanvas/HTMLCanvasElement share getContext at runtime.
-    const ctx = offscreen.getContext("2d");
-    if (!ctx) throw new Error("2D canvas unavailable");
-    ctx.imageSmoothingEnabled = true;
-    // @ts-ignore - imageSmoothingQuality isn't in all TS libs.
-    if ("imageSmoothingQuality" in ctx) ctx.imageSmoothingQuality = "high";
-    ctx.clearRect(0, 0, w, h);
-    // @ts-ignore - CanvasImageSource is valid for drawImage.
-    ctx.drawImage(source, 0, 0, w, h);
+  const base = makeOffscreenCanvas(baseW, baseH);
+  // @ts-ignore - OffscreenCanvas/HTMLCanvasElement share getContext at runtime.
+  const ctx = base.getContext("2d");
+  if (!ctx) throw new Error("2D canvas unavailable");
+  ctx.imageSmoothingEnabled = true;
+  // @ts-ignore - imageSmoothingQuality isn't in all TS libs.
+  if ("imageSmoothingQuality" in ctx) ctx.imageSmoothingQuality = "high";
+  ctx.clearRect(0, 0, baseW, baseH);
+  // @ts-ignore - CanvasImageSource is valid for drawImage.
+  ctx.drawImage(source, 0, 0, baseW, baseH);
 
-    if (cleanup) cleanup();
+  if (cleanup) cleanup();
 
-    const cx = cursor.has ? cursor.x : Math.floor(sim.width / 2);
-    const cy = cursor.has ? cursor.y : Math.floor(sim.height / 2);
-    let ox = Math.round(cx - w / 2);
-    let oy = Math.round(cy - h / 2);
-    ox = clamp(ox, 1, sim.width - 1 - w);
-    oy = clamp(oy, 1, sim.height - h);
+  stamp = { base, srcW: baseW, srcH: baseH, w: baseW, h: baseH };
+  stampMode.checked = true;
+  syncStampInputsFromState();
+}
 
+/**
+ * @param {number} x
+ * @param {number} y
+ */
+function placeStampAt(x, y) {
+  if (!sim || !stamp) return;
+  if (activeLevel.id !== LEVEL_ID.SANDBOX) return;
+
+  const w = stamp.w | 0;
+  const h = stamp.h | 0;
+
+  const maxW = Math.max(1, sim.width - 2);
+  const maxH = Math.max(1, sim.height - 1);
+  const clampedW = clampInt(w, 1, maxW);
+  const clampedH = clampInt(h, 1, maxH);
+
+  let ox = Math.round(x - clampedW / 2);
+  let oy = Math.round(y - clampedH / 2);
+  ox = clamp(ox, 1, sim.width - 1 - clampedW);
+  oy = clamp(oy, 1, sim.height - clampedH);
+
+  if (clampedW === stamp.srcW && clampedH === stamp.srcH) {
     // @ts-ignore - OffscreenCanvas is a valid CanvasImageSource at runtime.
-    sim.stampImage(offscreen, w, h, ox, oy, { edgeStone: pasteEdgeStone.checked, addMode: addMode.checked });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    notify(`paste failed: ${msg}`);
+    sim.stampImage(stamp.base, clampedW, clampedH, ox, oy, { edgeStone: pasteEdgeStone.checked, addMode: addMode.checked });
+    return;
   }
+
+  const out = makeOffscreenCanvas(clampedW, clampedH);
+  // @ts-ignore - OffscreenCanvas/HTMLCanvasElement share getContext at runtime.
+  const ctx = out.getContext("2d");
+  if (!ctx) return;
+  ctx.imageSmoothingEnabled = true;
+  // @ts-ignore - imageSmoothingQuality isn't in all TS libs.
+  if ("imageSmoothingQuality" in ctx) ctx.imageSmoothingQuality = "high";
+  ctx.clearRect(0, 0, clampedW, clampedH);
+  // @ts-ignore - CanvasImageSource is valid for drawImage.
+  ctx.drawImage(stamp.base, 0, 0, stamp.srcW, stamp.srcH, 0, 0, clampedW, clampedH);
+  // @ts-ignore - OffscreenCanvas is a valid CanvasImageSource at runtime.
+  sim.stampImage(out, clampedW, clampedH, ox, oy, { edgeStone: pasteEdgeStone.checked, addMode: addMode.checked });
 }
 
 /**
@@ -503,7 +637,12 @@ pasteFileInput.addEventListener("change", async () => {
   const file = pasteFileInput.files && pasteFileInput.files[0] ? pasteFileInput.files[0] : null;
   pasteFileInput.value = "";
   if (!file) return;
-  await pasteImageBlob(file);
+  try {
+    await loadStampFromBlob(file);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    notify(`paste failed: ${msg}`);
+  }
 });
 
 pasteBtn.addEventListener("click", async (e) => {
@@ -526,7 +665,12 @@ pasteBtn.addEventListener("click", async (e) => {
         if (isCoarse) pasteFileInput.click();
         return;
       }
-      await pasteImageBlob(blob, { noScale: e.shiftKey });
+      try {
+        await loadStampFromBlob(blob, { noScale: e.shiftKey });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        notify(`paste failed: ${msg}`);
+      }
       return;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -562,7 +706,12 @@ window.addEventListener("paste", async (e) => {
   if (!file) return;
 
   e.preventDefault();
-  await pasteImageBlob(file, { noScale: e.shiftKey });
+  try {
+    await loadStampFromBlob(file, { noScale: e.shiftKey });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    notify(`paste failed: ${msg}`);
+  }
 });
 
 window.addEventListener("keydown", (e) => {
@@ -719,21 +868,57 @@ function drawBrushCursor() {
   cursorCtx.clearRect(0, 0, w, h);
   if (!cursor.has) return;
 
-  const radius = Number(brushSize.value) | 0;
-  if (radius <= 0) return;
-
   const x = clamp(cursor.x, 0, sim.width - 1);
   const y = clamp(cursor.y, 0, sim.height - 1);
 
   const sx = w / sim.width;
   const sy = h / sim.height;
+
+  const cellPx = Math.max(1, Math.min(3, Math.round(Math.min(sx, sy))));
+
+  if (stampMode.checked && stamp) {
+    const maxW = Math.max(1, sim.width - 2);
+    const maxH = Math.max(1, sim.height - 1);
+    const stampW0 = clampInt(stamp.w, 1, maxW);
+    const stampH0 = clampInt(stamp.h, 1, maxH);
+
+    let ox = Math.round(x - stampW0 / 2);
+    let oy = Math.round(y - stampH0 / 2);
+    ox = clamp(ox, 1, sim.width - 1 - stampW0);
+    oy = clamp(oy, 1, sim.height - stampH0);
+
+    const left = ox * sx;
+    const top = h - (oy + stampH0) * sy;
+    const bw = stampW0 * sx;
+    const bh = stampH0 * sy;
+
+    cursorCtx.save();
+    cursorCtx.beginPath();
+    cursorCtx.rect(left, top, bw, bh);
+    cursorCtx.strokeStyle = "rgba(0, 0, 0, 0.28)";
+    cursorCtx.lineWidth = cellPx + 2;
+    cursorCtx.stroke();
+
+    cursorCtx.setLineDash([6 * cellPx, 4 * cellPx]);
+    cursorCtx.beginPath();
+    cursorCtx.rect(left, top, bw, bh);
+    cursorCtx.strokeStyle = "rgba(124, 196, 255, 0.4)";
+    cursorCtx.lineWidth = cellPx;
+    cursorCtx.stroke();
+    cursorCtx.setLineDash([]);
+    cursorCtx.restore();
+    return;
+  }
+
+  const radius = Number(brushSize.value) | 0;
+  if (radius <= 0) return;
+
   const cx = (x + 0.5) * sx;
   const cy = h - (y + 0.5) * sy;
 
   const rx = (radius + 0.5) * sx;
   const ry = (radius + 0.5) * sy;
 
-  const cellPx = Math.max(1, Math.min(3, Math.round(Math.min(sx, sy))));
   const color = brush.down && brush.mode === "erase" ? "rgba(255, 96, 96, 0.45)" : "rgba(124, 196, 255, 0.4)";
 
   cursorCtx.save();

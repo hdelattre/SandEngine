@@ -81,4 +81,13 @@
  * @property {number} seed
  */
 
+/**
+ * @typedef {object} StampState
+ * @property {HTMLCanvasElement | OffscreenCanvas} base
+ * @property {number} srcW
+ * @property {number} srcH
+ * @property {number} w
+ * @property {number} h
+ */
+
 export {};
