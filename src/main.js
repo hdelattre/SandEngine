@@ -568,6 +568,10 @@ window.addEventListener("paste", async (e) => {
 window.addEventListener("keydown", (e) => {
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement) return;
 
+  // Don't treat OS/browser shortcuts as simulation hotkeys (e.g. Cmd+V would
+  // otherwise trigger the "v" particle hotkey).
+  if (e.metaKey || e.ctrlKey) return;
+
   if (!settingsPanel.hidden && e.key === "Escape") {
     e.preventDefault();
     setSettingsOpen(false);
