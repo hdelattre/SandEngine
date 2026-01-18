@@ -528,3 +528,63 @@ input[type="range"]:focus-visible,
 .fatal__small {
   font-size: 12px;
 }
+
+.loading {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(2px);
+}
+
+.loading[hidden] {
+  display: none !important;
+}
+
+.loading__card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--border);
+  background: color-mix(in oklab, var(--panel), black 10%);
+  border-radius: 14px;
+  padding: 12px 14px;
+  box-shadow:
+    0 18px 50px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(255, 255, 255, 0.03) inset;
+}
+
+.loading__title {
+  font-weight: 650;
+  letter-spacing: 0.2px;
+}
+
+.loading__msg {
+  margin-top: 2px;
+  font-size: 12px;
+  color: color-mix(in oklab, var(--muted), white 6%);
+}
+
+.loading__spinner {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 2px solid color-mix(in oklab, var(--muted), transparent 65%);
+  border-top-color: color-mix(in oklab, var(--accent), white 10%);
+  animation: spin 900ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loading__spinner {
+    animation: none;
+  }
+}

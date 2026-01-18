@@ -52,6 +52,17 @@ function showFatalError(title, msg) {
   if (fatalOverlayEl) fatalOverlayEl.hidden = false;
   if (fatalTitleEl) setText(fatalTitleEl, title);
   if (fatalMessageEl) setText(fatalMessageEl, msg);
+  if (loadingOverlayEl) loadingOverlayEl.hidden = true;
+}
+
+/**
+ * @param {boolean} on
+ * @param {string} [msg]
+ */
+function setLoading(on, msg) {
+  if (!loadingOverlayEl) return;
+  loadingOverlayEl.hidden = !on;
+  if (msg && loadingMessageEl) setText(loadingMessageEl, msg);
 }
 
 const canvas = /** @type {HTMLCanvasElement} */ (document.getElementById("canvas"));
@@ -61,6 +72,8 @@ const hintStatusEl = /** @type {HTMLElement} */ (document.getElementById("hintSt
 const fatalOverlayEl = /** @type {HTMLDivElement} */ (document.getElementById("fatalOverlay"));
 const fatalTitleEl = /** @type {HTMLElement} */ (document.getElementById("fatalTitle"));
 const fatalMessageEl = /** @type {HTMLElement} */ (document.getElementById("fatalMessage"));
+const loadingOverlayEl = /** @type {HTMLDivElement} */ (document.getElementById("loadingOverlay"));
+const loadingMessageEl = /** @type {HTMLElement} */ (document.getElementById("loadingMessage"));
 const playPauseBtn = /** @type {HTMLButtonElement} */ (document.getElementById("playPauseBtn"));
 const stepBtn = /** @type {HTMLButtonElement} */ (document.getElementById("stepBtn"));
 const clearBtn = /** @type {HTMLButtonElement} */ (document.getElementById("clearBtn"));
@@ -127,6 +140,7 @@ let sim = null;
 let didAutoPoster = false;
 
 setText(hintStatusEl, "Initializing GPU…");
+setLoading(true, "Compiling shaders…");
 
 try {
   const { width, height } = parseRes(resSelect.value);
@@ -627,6 +641,7 @@ window.addEventListener(
 let lastNow = performance.now();
 let fps = 60;
 let lastStatusNow = 0;
+let didFirstRender = false;
 
 function syncRangeReadouts() {
   if (brushSizeValue) brushSizeValue.textContent = brushSize.value;
@@ -1248,6 +1263,10 @@ function loop(now) {
 
   sim.render();
   drawBrushCursor();
+  if (!didFirstRender) {
+    didFirstRender = true;
+    setLoading(false);
+  }
 
   if (dtMs > 0 && dtMs <= 250) fps = fps * 0.9 + (1000 / Math.max(1, dtMs)) * 0.1;
   if (now - lastStatusNow > 180) {
