@@ -395,6 +395,24 @@ select {
     0 0 0 2px color-mix(in oklab, var(--accent), transparent 40%);
 }
 
+.stampThumb {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 10px;
+  border: 1px solid color-mix(in oklab, var(--border), transparent 20%);
+  background: color-mix(in oklab, var(--panel2), white 2%);
+  overflow: hidden;
+}
+
+.stampThumb > canvas {
+  width: 28px;
+  height: 28px;
+  margin: 1px;
+  display: block;
+  border-radius: 9px;
+}
+
 .hotbar__more {
   height: 28px;
   padding: 0 10px;

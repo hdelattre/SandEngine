@@ -126,142 +126,6 @@ for (const id of Object.values(Particle)) {
 }
 particleSelect.value = String(Particle.SAND);
 
-/**
- * @param {number} id
- */
-function setSelectedParticle(id) {
-  const nextId = id | 0;
-  particleSelect.value = String(nextId);
-  pushRecentParticle(nextId);
-  syncParticleUi();
-}
-
-function syncParticleUi() {
-  const current = Number(particleSelect.value) | 0;
-  for (const el of particleHotbar.querySelectorAll("button[data-pid]")) {
-    if (!(el instanceof HTMLButtonElement)) continue;
-    const pid = Number(el.dataset.pid) | 0;
-    el.setAttribute("aria-pressed", pid === current ? "true" : "false");
-  }
-}
-
-/**
- * @param {number} id
- */
-function particleChipLabel(id) {
-  const def = particleDefs[id];
-  const [r, g, b] = def.color;
-  return { name: def.name, color: `rgb(${r} ${g} ${b})` };
-}
-
-/** @type {number[]} */
-const recentParticles = [Particle.SAND, Particle.WATER, Particle.STONE, Particle.DIRT, Particle.FIRE, Particle.SMOKE];
-
-/**
- * @param {number} id
- */
-function pushRecentParticle(id) {
-  if (!(id in particleDefs)) return;
-  const idx = recentParticles.indexOf(id);
-  if (idx >= 0) recentParticles.splice(idx, 1);
-  recentParticles.unshift(id);
-  if (recentParticles.length > 12) recentParticles.length = 12;
-  buildParticleHotbar();
-}
-
-function wantsCompactHotbar() {
-  return window.matchMedia("(pointer: coarse) and (max-width: 620px)").matches;
-}
-
-function hotbarParticleIds() {
-  if (wantsCompactHotbar()) return recentParticles.slice(0, 6);
-  return [
-    Particle.SAND,
-    Particle.WATER,
-    Particle.STONE,
-    Particle.DIRT,
-    Particle.MUD,
-    Particle.OIL,
-    Particle.PLANT,
-    Particle.FIRE,
-    Particle.SMOKE,
-    Particle.STEAM,
-    Particle.LAVA,
-    Particle.ACID,
-  ];
-}
-
-function buildParticleHotbar() {
-  const hot = hotbarParticleIds();
-  particleHotbar.replaceChildren();
-  for (const id of hot) {
-    const { name, color } = particleChipLabel(id);
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "particleChip";
-    btn.dataset.pid = String(id);
-    btn.title = name;
-    btn.setAttribute("aria-label", name);
-    btn.setAttribute("aria-pressed", "false");
-    btn.style.setProperty("--chip", color);
-    btn.addEventListener("click", () => setSelectedParticle(id));
-    particleHotbar.appendChild(btn);
-  }
-  syncParticleUi();
-}
-
-function setParticlePickerOpen(open) {
-  particlePicker.hidden = !open;
-  if (open) {
-    particleSearch.value = "";
-    particleSearch.focus();
-    syncParticleGrid();
-  }
-}
-
-function syncParticleGrid() {
-  const q = particleSearch.value.trim().toLowerCase();
-  const current = Number(particleSelect.value) | 0;
-  particleGrid.replaceChildren();
-  for (const id of Object.values(Particle)) {
-    const def = particleDefs[id];
-    if (!def || !def.name) continue;
-    if (q && !def.name.toLowerCase().includes(q)) continue;
-    const [r, g, b] = def.color;
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "particleTile";
-    btn.dataset.pid = String(def.id);
-    btn.setAttribute("role", "option");
-    btn.setAttribute("aria-selected", def.id === current ? "true" : "false");
-    btn.innerHTML = `<span class="particleTile__swatch" style="background: rgb(${r} ${g} ${b})"></span><span class="particleTile__name"></span>`;
-    const nameEl = btn.querySelector(".particleTile__name");
-    if (nameEl) nameEl.textContent = def.name;
-    btn.addEventListener("click", () => {
-      setSelectedParticle(def.id);
-      setParticlePickerOpen(false);
-    });
-    particleGrid.appendChild(btn);
-  }
-}
-
-particleSelect.addEventListener("change", () => syncParticleUi());
-particleMoreBtn.addEventListener("click", () => setParticlePickerOpen(true));
-particlePickerCloseBtn.addEventListener("click", () => setParticlePickerOpen(false));
-particlePicker.addEventListener("pointerdown", (e) => {
-  if (e.target === particlePicker) setParticlePickerOpen(false);
-});
-particleSearch.addEventListener("input", () => syncParticleGrid());
-particleSearch.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") {
-    e.preventDefault();
-    setParticlePickerOpen(false);
-  }
-});
-
-buildParticleHotbar();
-window.matchMedia("(pointer: coarse) and (max-width: 620px)").addEventListener("change", () => buildParticleHotbar());
-
 const paletteTexels = buildPaletteTexels(particleDefs);
 const propTexels = buildPropTexels(particleDefs);
 const thermalDefs = createThermalDefs();
@@ -409,11 +273,209 @@ const brush = { down: false, x: 0, y: 0, lastX: 0, lastY: 0, mode: "paint" };
 const cursor = { x: Math.floor(sim.width / 2), y: Math.floor(sim.height / 2), has: false };
 
 /** @typedef {{base: HTMLCanvasElement | OffscreenCanvas, srcW: number, srcH: number, w: number, h: number}} StampState */
-  /** @type {StampState | null} */
+/** @type {StampState | null} */
 let stamp = null;
 
 /** @type {'paint'|'stamp'} */
 let activeTool = "paint";
+
+/**
+ * @param {number} id
+ */
+function setSelectedParticle(id) {
+  const nextId = id | 0;
+  particleSelect.value = String(nextId);
+  pushRecentParticle(nextId);
+  syncParticleUi();
+}
+
+function syncParticleUi() {
+  const current = Number(particleSelect.value) | 0;
+  for (const el of particleHotbar.querySelectorAll("button[data-pid]")) {
+    if (!(el instanceof HTMLButtonElement)) continue;
+    const pid = Number(el.dataset.pid) | 0;
+    el.setAttribute("aria-pressed", pid === current ? "true" : "false");
+  }
+}
+
+/**
+ * @param {number} id
+ */
+function particleChipLabel(id) {
+  const def = particleDefs[id];
+  const [r, g, b] = def.color;
+  return { name: def.name, color: `rgb(${r} ${g} ${b})` };
+}
+
+/** @type {number[]} */
+const recentParticles = [Particle.SAND, Particle.WATER, Particle.STONE, Particle.DIRT, Particle.FIRE, Particle.SMOKE];
+
+/** @type {StampState[]} */
+const recentStamps = [];
+
+/**
+ * @param {number} id
+ */
+function pushRecentParticle(id) {
+  if (!(id in particleDefs)) return;
+  const idx = recentParticles.indexOf(id);
+  if (idx >= 0) recentParticles.splice(idx, 1);
+  recentParticles.unshift(id);
+  if (recentParticles.length > 12) recentParticles.length = 12;
+  buildHotbar();
+}
+
+function wantsCompactHotbar() {
+  return window.matchMedia("(max-width: 620px)").matches;
+}
+
+function hotbarParticleIds() {
+  if (wantsCompactHotbar()) return recentParticles.slice(0, 6);
+  return [
+    Particle.SAND,
+    Particle.WATER,
+    Particle.STONE,
+    Particle.DIRT,
+    Particle.MUD,
+    Particle.OIL,
+    Particle.PLANT,
+    Particle.FIRE,
+    Particle.SMOKE,
+    Particle.STEAM,
+    Particle.LAVA,
+    Particle.ACID,
+  ];
+}
+
+/**
+ * @param {StampState} item
+ */
+function pushRecentStamp(item) {
+  const idx = recentStamps.findIndex((s) => s.base === item.base);
+  if (idx >= 0) recentStamps.splice(idx, 1);
+  recentStamps.unshift(item);
+  if (recentStamps.length > 6) recentStamps.length = 6;
+  buildHotbar();
+}
+
+/**
+ * @param {HTMLCanvasElement} canvas
+ * @param {HTMLCanvasElement | OffscreenCanvas} source
+ * @param {number} srcW
+ * @param {number} srcH
+ */
+function drawStampThumb(canvas, source, srcW, srcH) {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.imageSmoothingEnabled = true;
+  // @ts-ignore - CanvasImageSource is valid for drawImage.
+  ctx.drawImage(source, 0, 0, srcW, srcH, 0, 0, canvas.width, canvas.height);
+}
+
+function buildHotbar() {
+  particleHotbar.replaceChildren();
+  if (activeTool === "stamp") {
+    particleMoreBtn.textContent = "Paste";
+    for (const s of recentStamps) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "stampThumb";
+      btn.setAttribute("aria-label", "Recent stamp");
+      const c = document.createElement("canvas");
+      c.width = 28;
+      c.height = 28;
+      drawStampThumb(c, s.base, s.srcW, s.srcH);
+      btn.appendChild(c);
+      btn.addEventListener("click", () => {
+        stamp = { base: s.base, srcW: s.srcW, srcH: s.srcH, w: s.w, h: s.h };
+        stampMode.checked = true;
+        setTool("stamp");
+        syncStampInputsFromState();
+        pushRecentStamp(stamp);
+      });
+      particleHotbar.appendChild(btn);
+    }
+    return;
+  }
+  particleMoreBtn.textContent = "More";
+  for (const id of hotbarParticleIds()) {
+    const { name, color } = particleChipLabel(id);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "particleChip";
+    btn.dataset.pid = String(id);
+    btn.title = name;
+    btn.setAttribute("aria-label", name);
+    btn.setAttribute("aria-pressed", "false");
+    btn.style.setProperty("--chip", color);
+    btn.addEventListener("click", () => setSelectedParticle(id));
+    particleHotbar.appendChild(btn);
+  }
+  syncParticleUi();
+}
+
+function setParticlePickerOpen(open) {
+  particlePicker.hidden = !open;
+  if (open) {
+    particleSearch.value = "";
+    particleSearch.focus();
+    syncParticleGrid();
+  }
+}
+
+function syncParticleGrid() {
+  const q = particleSearch.value.trim().toLowerCase();
+  const current = Number(particleSelect.value) | 0;
+  particleGrid.replaceChildren();
+  for (const id of Object.values(Particle)) {
+    const def = particleDefs[id];
+    if (!def || !def.name) continue;
+    if (q && !def.name.toLowerCase().includes(q)) continue;
+    const [r, g, b] = def.color;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "particleTile";
+    btn.dataset.pid = String(def.id);
+    btn.setAttribute("role", "option");
+    btn.setAttribute("aria-selected", def.id === current ? "true" : "false");
+    btn.innerHTML = `<span class="particleTile__swatch" style="background: rgb(${r} ${g} ${b})"></span><span class="particleTile__name"></span>`;
+    const nameEl = btn.querySelector(".particleTile__name");
+    if (nameEl) nameEl.textContent = def.name;
+    btn.addEventListener("click", () => {
+      setSelectedParticle(def.id);
+      setParticlePickerOpen(false);
+    });
+    particleGrid.appendChild(btn);
+  }
+}
+
+particleSelect.addEventListener("change", () => syncParticleUi());
+particleMoreBtn.addEventListener("click", () => {
+  if (activeTool === "stamp") pasteBtn.click();
+  else setParticlePickerOpen(true);
+});
+particlePickerCloseBtn.addEventListener("click", () => setParticlePickerOpen(false));
+particlePicker.addEventListener("pointerdown", (e) => {
+  if (e.target === particlePicker) setParticlePickerOpen(false);
+});
+particleSearch.addEventListener("input", () => syncParticleGrid());
+particleSearch.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    e.preventDefault();
+    setParticlePickerOpen(false);
+  }
+});
+
+buildHotbar();
+{
+  const mq = window.matchMedia("(max-width: 620px)");
+  const onChange = () => buildHotbar();
+  if (typeof mq.addEventListener === "function") mq.addEventListener("change", onChange);
+  // Safari < 14
+  // @ts-ignore - addListener exists in older browsers.
+  else if (typeof mq.addListener === "function") mq.addListener(onChange);
+}
 
 const camera = { centerX: 0.5, centerY: 0.5, zoom: 1.0 };
 /** @type {{down: boolean, pointerId: number, startX: number, startY: number, startCenterX: number, startCenterY: number}} */
@@ -615,6 +677,7 @@ stampH.addEventListener("input", onStampHInput);
 function syncToolUi() {
   toolPaintBtn.setAttribute("aria-pressed", activeTool === "paint" ? "true" : "false");
   toolStampBtn.setAttribute("aria-pressed", activeTool === "stamp" ? "true" : "false");
+  buildHotbar();
 }
 
 /**
@@ -1277,6 +1340,7 @@ async function loadStampFromBlob(blob, opts) {
   stampMode.checked = true;
   setTool("stamp");
   syncStampInputsFromState();
+  pushRecentStamp(stamp);
 }
 
 /**
