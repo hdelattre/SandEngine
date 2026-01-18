@@ -102,6 +102,7 @@ const stampW = /** @type {HTMLInputElement} */ (document.getElementById("stampW"
 const stampH = /** @type {HTMLInputElement} */ (document.getElementById("stampH"));
 const stampLock = /** @type {HTMLInputElement} */ (document.getElementById("stampLock"));
 const addMode = /** @type {HTMLInputElement} */ (document.getElementById("addMode"));
+const golMode = /** @type {HTMLInputElement} */ (document.getElementById("golMode"));
 const levelHintEl = /** @type {HTMLElement} */ (document.getElementById("levelHint"));
 const settingsBtn = /** @type {HTMLButtonElement} */ (document.getElementById("settingsBtn"));
 const settingsPanel = /** @type {HTMLDivElement} */ (document.getElementById("settingsPanel"));
@@ -955,6 +956,21 @@ clearBtn.addEventListener("click", () => {
 
 viewSelect.addEventListener("change", () => {
   sim.setViewMode(/** @type {ViewMode} */ (viewSelect.value));
+});
+
+golMode.checked = sim.golEnabled;
+golMode.addEventListener("change", async () => {
+  const want = golMode.checked;
+  golMode.disabled = true;
+  try {
+    await sim.setGolEnabled(want);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    notify(`life failed: ${msg}`);
+  } finally {
+    golMode.checked = sim.golEnabled;
+    golMode.disabled = false;
+  }
 });
 
 resSelect.addEventListener("change", () => {

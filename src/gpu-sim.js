@@ -49,6 +49,11 @@ export class GpuSim {
     this.camCenterX = 0.5;
     this.camCenterY = 0.5;
     this.camZoom = 1.0;
+    this.golEnabled = false;
+    /** @type {null | {program: WebGLProgram, u: Record<string, WebGLUniformLocation>}} */
+    this._gol = null;
+    /** @type {Promise<void> | null} */
+    this._golLoading = null;
 
     this._vao = createFullscreenVao(gl);
 
@@ -154,6 +159,60 @@ export class GpuSim {
         passSalt: mustGetUniform(gl, program, "u_passSalt"),
       },
     };
+  }
+
+  /**
+   * @param {string} frag
+   * @returns {{program: WebGLProgram, u: Record<string, WebGLUniformLocation>}}
+   */
+  _createGolProgram(frag) {
+    const gl = this.gl;
+    const program = createProgram(gl, FULLSCREEN_VERT, frag);
+    return {
+      program,
+      u: {
+        state: mustGetUniform(gl, program, "u_state"),
+        energy: mustGetUniform(gl, program, "u_energy"),
+        thermal0: mustGetUniform(gl, program, "u_thermal0"),
+        thermal1: mustGetUniform(gl, program, "u_thermal1"),
+        latent: mustGetUniform(gl, program, "u_latent"),
+        size: mustGetUniform(gl, program, "u_size"),
+        seed: mustGetUniform(gl, program, "u_seed"),
+        tick: mustGetUniform(gl, program, "u_tick"),
+      },
+    };
+  }
+
+  /**
+   * Lazy-loads + compiles the GoL shader program, and toggles whether it runs per tick.
+   * @param {boolean} enabled
+   * @returns {Promise<void>}
+   */
+  async setGolEnabled(enabled) {
+    if (!enabled) {
+      this.golEnabled = false;
+      return;
+    }
+    if (this._gol) {
+      this.golEnabled = true;
+      return;
+    }
+
+    if (!this._golLoading) {
+      this._golLoading = (async () => {
+        try {
+          const mod = await import("./shaders-gol.js");
+          this._gol = this._createGolProgram(mod.GOL_FRAG);
+        } finally {
+          // Allow retry on failure.
+          this._golLoading = null;
+        }
+      })();
+    }
+
+    await this._golLoading;
+    if (!this._gol) throw new Error("GoL program failed to initialize");
+    this.golEnabled = true;
   }
 
   /**
@@ -427,6 +486,41 @@ export class GpuSim {
     this._swap();
   }
 
+  _golPass() {
+    const gol = this._gol;
+    if (!gol) return;
+    const gl = this.gl;
+    const { program, u } = gol;
+
+    gl.useProgram(program);
+    gl.uniform2i(u.size, this.width, this.height);
+    gl.uniform1ui(u.seed, this.seed >>> 0);
+    gl.uniform1ui(u.tick, this.tick >>> 0);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this._srcTex());
+    gl.uniform1i(u.state, 0);
+
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this._srcEnergyTex());
+    gl.uniform1i(u.energy, 1);
+
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, this._thermal0Tex);
+    gl.uniform1i(u.thermal0, 2);
+
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, this._thermal1Tex);
+    gl.uniform1i(u.thermal1, 3);
+
+    gl.activeTexture(gl.TEXTURE4);
+    gl.bindTexture(gl.TEXTURE_2D, this._latentTex);
+    gl.uniform1i(u.latent, 4);
+
+    this._draw(program, this._dstFb(), this.width, this.height);
+    this._swap();
+  }
+
   /**
    * Runs one simulation tick (multiple disjoint-pair passes).
    */
@@ -463,6 +557,8 @@ export class GpuSim {
     this._matterPass(horiz[0], horiz[1], 1, 0, 1, 31);
     this._matterPass(horiz[0], horiz[1], 0, 0, 1, 32);
     this._matterPass(horiz[0], horiz[1], 1, 0, 1, 33);
+
+    if (this.golEnabled && this._gol) this._golPass();
 
     this.tick++;
   }
