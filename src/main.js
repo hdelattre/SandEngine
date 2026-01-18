@@ -159,11 +159,11 @@ async function boot() {
       height,
       seed: (Math.random() * 2 ** 32) >>> 0,
     });
-    setText(hintStatusEl, "WebGL2 ✓");
+    setText(hintStatusEl, "");
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     setText(statusEl, `Error: ${msg}`);
-    setText(hintStatusEl, "WebGL2 required");
+    setText(hintStatusEl, "");
     showFatalError("WebGL2 required", msg);
     return;
   } finally {
