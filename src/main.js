@@ -291,13 +291,71 @@ function nextFrame() {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }
 
+/**
+ * @returns {{maxTexSize: number, maxRbSize: number} | null}
+ */
+function queryWebgl2Limits() {
+  try {
+    const c = document.createElement("canvas");
+    const gl = c.getContext("webgl2", { alpha: false, antialias: false, depth: false, stencil: false, preserveDrawingBuffer: false });
+    if (!gl) return null;
+    return {
+      maxTexSize: Number(gl.getParameter(gl.MAX_TEXTURE_SIZE)) || 0,
+      maxRbSize: Number(gl.getParameter(gl.MAX_RENDERBUFFER_SIZE)) || 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * @param {number} maxDim
+ */
+function populateResOptions(maxDim) {
+  const widths = [256, 384, 512, 768, 1024, 1280, 1536, 1792, 2048, 2560, 3072, 3840, 4096, 5120, 6144, 7680];
+  const opts = widths
+    .map((w) => ({ w, h: Math.round((w * 9) / 16) }))
+    .filter((r) => r.w <= maxDim && r.h <= maxDim);
+
+  resSelect.replaceChildren();
+  for (const r of opts) {
+    const opt = document.createElement("option");
+    opt.value = `${r.w}x${r.h}`;
+    opt.textContent = `${r.w}×${r.h}`;
+    resSelect.appendChild(opt);
+  }
+
+  const preferred = "768x432";
+  if (Array.from(resSelect.options).some((o) => o.value === preferred)) resSelect.value = preferred;
+  else if (resSelect.options.length) resSelect.selectedIndex = resSelect.options.length - 1;
+}
+
 function applyStartupParams() {
   const sp = new URLSearchParams(window.location.search);
   const rawRes = sp.get("res");
   if (rawRes) {
     const v = rawRes.trim().toLowerCase().replace("×", "x");
-    const ok = Array.from(resSelect.options).some((opt) => opt.value === v);
-    if (ok) resSelect.value = v;
+    try {
+      const parsed = parseRes(v);
+      const maxDim = Number(resSelect.dataset.maxDim || "0") || 0;
+      const clampIntLocal = (n, lo, hi) => {
+        n = n | 0;
+        return n < lo ? lo : n > hi ? hi : n;
+      };
+      const w = maxDim ? clampIntLocal(parsed.width, 1, maxDim) : parsed.width;
+      const h = maxDim ? clampIntLocal(parsed.height, 1, maxDim) : parsed.height;
+      const vv = `${w}x${h}`;
+      const ok = Array.from(resSelect.options).some((opt) => opt.value === vv);
+      if (!ok) {
+        const opt = document.createElement("option");
+        opt.value = vv;
+        opt.textContent = `${w}×${h}`;
+        resSelect.appendChild(opt);
+      }
+      resSelect.value = vv;
+    } catch {
+      // ignore invalid res
+    }
   }
 }
 
@@ -307,6 +365,10 @@ async function boot() {
   await nextFrame();
 
   try {
+    const limits = queryWebgl2Limits();
+    const maxDim = limits ? Math.max(0, Math.min(limits.maxTexSize, limits.maxRbSize)) : 0;
+    if (maxDim) resSelect.dataset.maxDim = String(maxDim);
+    populateResOptions(maxDim || 8192);
     applyStartupParams();
     const { width, height } = parseRes(resSelect.value);
     sim = new GpuSim(canvas, particleDefs, paletteTexels, propTexels, thermal0Texels, thermal1Texels, latentTexels, {
