@@ -483,3 +483,48 @@ input[type="range"]:focus-visible,
   font-size: 12px;
   color: color-mix(in oklab, var(--muted), white 10%);
 }
+
+.fatal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: radial-gradient(1200px 700px at 50% 30%, color-mix(in oklab, var(--panel), black 8%), var(--bg));
+}
+
+.fatal[hidden] {
+  display: none !important;
+}
+
+.fatal__card {
+  width: min(560px, 100%);
+  border: 1px solid var(--border);
+  background: color-mix(in oklab, var(--panel), black 10%);
+  border-radius: 16px;
+  padding: 16px 16px 14px;
+  box-shadow:
+    0 20px 60px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(255, 255, 255, 0.03) inset;
+}
+
+.fatal__card h1 {
+  margin: 0 0 8px;
+  font-size: 16px;
+  letter-spacing: 0.2px;
+}
+
+.fatal__card p {
+  margin: 0;
+  color: color-mix(in oklab, var(--muted), white 6%);
+}
+
+.fatal__card p + p {
+  margin-top: 10px;
+}
+
+.fatal__small {
+  font-size: 12px;
+}

@@ -43,10 +43,24 @@ function notify(msg) {
   hintStatusEl.title = msg;
 }
 
+/**
+ * Shows a blocking error overlay (e.g. WebGL2 unavailable).
+ * @param {string} title
+ * @param {string} msg
+ */
+function showFatalError(title, msg) {
+  if (fatalOverlayEl) fatalOverlayEl.hidden = false;
+  if (fatalTitleEl) setText(fatalTitleEl, title);
+  if (fatalMessageEl) setText(fatalMessageEl, msg);
+}
+
 const canvas = /** @type {HTMLCanvasElement} */ (document.getElementById("canvas"));
 const cursorCanvas = /** @type {HTMLCanvasElement} */ (document.getElementById("cursorCanvas"));
 const statusEl = /** @type {HTMLElement} */ (document.getElementById("status"));
 const hintStatusEl = /** @type {HTMLElement} */ (document.getElementById("hintStatus"));
+const fatalOverlayEl = /** @type {HTMLDivElement} */ (document.getElementById("fatalOverlay"));
+const fatalTitleEl = /** @type {HTMLElement} */ (document.getElementById("fatalTitle"));
+const fatalMessageEl = /** @type {HTMLElement} */ (document.getElementById("fatalMessage"));
 const playPauseBtn = /** @type {HTMLButtonElement} */ (document.getElementById("playPauseBtn"));
 const stepBtn = /** @type {HTMLButtonElement} */ (document.getElementById("stepBtn"));
 const clearBtn = /** @type {HTMLButtonElement} */ (document.getElementById("clearBtn"));
@@ -110,6 +124,8 @@ levelHintEl.textContent = "";
 let sim = null;
 let didAutoPoster = false;
 
+setText(hintStatusEl, "Initializing GPU…");
+
 try {
   const { width, height } = parseRes(resSelect.value);
   sim = new GpuSim(canvas, particleDefs, paletteTexels, propTexels, thermal0Texels, thermal1Texels, latentTexels, {
@@ -122,6 +138,7 @@ try {
   const msg = err instanceof Error ? err.message : String(err);
   setText(statusEl, `Error: ${msg}`);
   setText(hintStatusEl, "WebGL2 required");
+  showFatalError("WebGL2 required", msg);
 }
 
 if (!sim) throw new Error("WebGL2 required");
@@ -776,6 +793,7 @@ async function autoStampPosterOnce() {
 
     // @ts-ignore - OffscreenCanvas is a valid CanvasImageSource at runtime.
     sim.stampImage(offscreen, w, h, 1, 1, { edgeStone: pasteEdgeStone.checked, addMode: false });
+
     startStartupStepRamp();
   } catch {
     // silent: poster is optional

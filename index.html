@@ -114,6 +114,14 @@
       <canvas id="cursorCanvas"></canvas>
     </main>
 
+    <div id="fatalOverlay" class="fatal" hidden>
+      <div class="fatal__card" role="alert">
+        <h1 id="fatalTitle">Unable to start</h1>
+        <p id="fatalMessage"></p>
+        <p class="fatal__small">This app requires WebGL2. Try enabling hardware acceleration or using a different browser.</p>
+      </div>
+    </div>
+
     <script type="module" src="./src/main.js"></script>
   </body>
 </html>
