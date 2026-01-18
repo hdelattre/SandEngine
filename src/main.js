@@ -147,12 +147,23 @@ function nextFrame() {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }
 
+function applyStartupParams() {
+  const sp = new URLSearchParams(window.location.search);
+  const rawRes = sp.get("res");
+  if (rawRes) {
+    const v = rawRes.trim().toLowerCase().replace("×", "x");
+    const ok = Array.from(resSelect.options).some((opt) => opt.value === v);
+    if (ok) resSelect.value = v;
+  }
+}
+
 async function boot() {
   setText(hintStatusEl, "Initializing GPU…");
   setLoading(true, "Compiling shaders…");
   await nextFrame();
 
   try {
+    applyStartupParams();
     const { width, height } = parseRes(resSelect.value);
     sim = new GpuSim(canvas, particleDefs, paletteTexels, propTexels, thermal0Texels, thermal1Texels, latentTexels, {
       width,
