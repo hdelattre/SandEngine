@@ -87,6 +87,8 @@ const particlePicker = /** @type {HTMLDivElement} */ (document.getElementById("p
 const particleSearch = /** @type {HTMLInputElement} */ (document.getElementById("particleSearch"));
 const particleGrid = /** @type {HTMLDivElement} */ (document.getElementById("particleGrid"));
 const particlePickerCloseBtn = /** @type {HTMLButtonElement} */ (document.getElementById("particlePickerCloseBtn"));
+const brushControl = /** @type {HTMLElement} */ (document.getElementById("brushControl"));
+const stampControls = /** @type {HTMLElement} */ (document.getElementById("stampControls"));
 const brushSize = /** @type {HTMLInputElement} */ (document.getElementById("brushSize"));
 const rateMode = /** @type {HTMLSelectElement} */ (document.getElementById("rateMode"));
 const simRateLabel = /** @type {HTMLSpanElement} */ (document.getElementById("simRateLabel"));
@@ -95,12 +97,10 @@ const zoomInput = /** @type {HTMLInputElement} */ (document.getElementById("zoom
 const viewSelect = /** @type {HTMLSelectElement} */ (document.getElementById("viewSelect"));
 const resSelect = /** @type {HTMLSelectElement} */ (document.getElementById("resSelect"));
 const pasteEdgeStone = /** @type {HTMLInputElement} */ (document.getElementById("pasteEdgeStone"));
-const pasteBtn = /** @type {HTMLButtonElement} */ (document.getElementById("pasteBtn"));
 const stampMode = /** @type {HTMLInputElement} */ (document.getElementById("stampMode"));
 const stampW = /** @type {HTMLInputElement} */ (document.getElementById("stampW"));
 const stampH = /** @type {HTMLInputElement} */ (document.getElementById("stampH"));
 const stampLock = /** @type {HTMLInputElement} */ (document.getElementById("stampLock"));
-const stampClearBtn = /** @type {HTMLButtonElement} */ (document.getElementById("stampClearBtn"));
 const addMode = /** @type {HTMLInputElement} */ (document.getElementById("addMode"));
 const levelHintEl = /** @type {HTMLElement} */ (document.getElementById("levelHint"));
 const settingsBtn = /** @type {HTMLButtonElement} */ (document.getElementById("settingsBtn"));
@@ -451,8 +451,8 @@ function syncParticleGrid() {
 }
 
 particleSelect.addEventListener("change", () => syncParticleUi());
-particleMoreBtn.addEventListener("click", () => {
-  if (activeTool === "stamp") pasteBtn.click();
+particleMoreBtn.addEventListener("click", (e) => {
+  if (activeTool === "stamp") void startPasteFlow(e.shiftKey);
   else setParticlePickerOpen(true);
 });
 particlePickerCloseBtn.addEventListener("click", () => setParticlePickerOpen(false));
@@ -615,7 +615,6 @@ function syncStampInputsFromState() {
     stampW.disabled = true;
     stampH.disabled = true;
     stampLock.disabled = true;
-    stampClearBtn.disabled = true;
     stampMode.disabled = true;
     return;
   }
@@ -623,7 +622,6 @@ function syncStampInputsFromState() {
   stampW.disabled = false;
   stampH.disabled = false;
   stampLock.disabled = false;
-  stampClearBtn.disabled = false;
   stampMode.disabled = false;
   stampW.value = String(stamp.w);
   stampH.value = String(stamp.h);
@@ -674,9 +672,20 @@ function onStampHInput() {
 
 stampW.addEventListener("input", onStampWInput);
 stampH.addEventListener("input", onStampHInput);
+
+const pasteEdgeStoneWrap = pasteEdgeStone.closest("label");
+
+function refreshToolbarVisibility() {
+  const isStamp = activeTool === "stamp";
+  brushControl.hidden = isStamp;
+  stampControls.hidden = !isStamp;
+  if (pasteEdgeStoneWrap) pasteEdgeStoneWrap.hidden = !isStamp;
+}
+
 function syncToolUi() {
   toolPaintBtn.setAttribute("aria-pressed", activeTool === "paint" ? "true" : "false");
   toolStampBtn.setAttribute("aria-pressed", activeTool === "stamp" ? "true" : "false");
+  refreshToolbarVisibility();
   buildHotbar();
 }
 
@@ -687,7 +696,7 @@ function setTool(tool) {
   if (tool === "stamp") {
     if (!stamp) {
       notify("paste an image to stamp first");
-      pasteBtn.click();
+      void startPasteFlow(false);
       tool = "paint";
     } else {
       stampMode.checked = true;
@@ -710,9 +719,6 @@ stampMode.addEventListener("change", () => {
   }
   if (stampMode.checked) setTool("stamp");
   else if (activeTool === "stamp") setTool("paint");
-});
-stampClearBtn.addEventListener("click", () => {
-  clearStamp();
 });
 syncStampInputsFromState();
 syncToolUi();
@@ -1101,7 +1107,6 @@ function setActiveLevel(levelId) {
   toolStampBtn.disabled = !isSandbox;
   resSelect.disabled = !isSandbox;
   pasteEdgeStone.disabled = !isSandbox;
-  pasteBtn.disabled = !isSandbox;
   if (!isSandbox) clearStamp();
   else syncStampInputsFromState();
   clearBtn.textContent = isSandbox ? "Clear" : "Restart";
@@ -1422,7 +1427,10 @@ pasteFileInput.addEventListener("change", async () => {
   }
 });
 
-pasteBtn.addEventListener("click", async (e) => {
+/**
+ * @param {boolean} noScale
+ */
+async function startPasteFlow(noScale) {
   if (activeLevel.id !== LEVEL_ID.SANDBOX) {
     notify("paste disabled in levels");
     return;
@@ -1439,11 +1447,11 @@ pasteBtn.addEventListener("click", async (e) => {
       const blob = await readClipboardImageBlob();
       if (!blob) {
         notify("clipboard has no image");
-        if (isCoarse) pasteFileInput.click();
+        pasteFileInput.click();
         return;
       }
       try {
-        await loadStampFromBlob(blob, { noScale: e.shiftKey });
+        await loadStampFromBlob(blob, { noScale });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         notify(`paste failed: ${msg}`);
@@ -1452,13 +1460,15 @@ pasteBtn.addEventListener("click", async (e) => {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       notify(`clipboard blocked: ${msg}`);
-      if (isCoarse) pasteFileInput.click();
-      return;
+      if (isCoarse) {
+        pasteFileInput.click();
+        return;
+      }
     }
   }
 
   pasteFileInput.click();
-});
+}
 
 window.addEventListener("paste", async (e) => {
   const active = document.activeElement;

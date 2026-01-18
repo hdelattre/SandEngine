@@ -30,13 +30,28 @@
             <div class="hotbar" role="group" aria-label="Particles">
               <div id="particleHotbar" class="hotbar__items"></div>
               <button id="particleMoreBtn" class="hotbar__more" type="button">More</button>
+              <label class="hotbar__toggle" title="Edges → Stone">
+                <input id="pasteEdgeStone" class="toggle toggle--mini" type="checkbox" checked aria-label="Edges to stone" />
+              </label>
             </div>
-            <label class="control control--range control--brush">
+            <label id="brushControl" class="control control--range control--brush">
               <span>Brush</span>
               <input id="brushSize" type="range" min="1" max="30" value="8" />
               <output class="control__value" id="brushSizeValue">8</output>
             </label>
-            <button id="pasteBtn" type="button">Paste</button>
+            <div id="stampControls" class="stampControls" hidden>
+              <label class="control control--stampSize">
+                <span>W</span>
+                <input id="stampW" type="number" min="1" step="1" inputmode="numeric" />
+              </label>
+              <label class="control control--stampSize">
+                <span>H</span>
+                <input id="stampH" type="number" min="1" step="1" inputmode="numeric" />
+              </label>
+              <label class="stampControls__toggle" title="Lock aspect">
+                <input id="stampLock" class="toggle toggle--mini" type="checkbox" checked aria-label="Lock aspect" />
+              </label>
+            </div>
           </div>
         </div>
       </div>
@@ -61,6 +76,7 @@
             <span>Particle</span>
             <select id="particleSelect"></select>
           </label>
+          <input id="stampMode" type="checkbox" hidden />
           <label class="control control--toggle">
             <span>Add</span>
             <input id="addMode" class="toggle" type="checkbox" />
@@ -93,35 +109,6 @@
             <span>Res</span>
             <select id="resSelect"></select>
           </label>
-          <div class="panelGroup panelGroup--paste">
-            <label class="control control--toggle">
-              <span>Edges→Stone</span>
-              <input id="pasteEdgeStone" class="toggle" type="checkbox" checked />
-            </label>
-          </div>
-          <div class="panelGroup panelGroup--stamp">
-            <div class="panelRow">
-              <label class="control control--toggle">
-                <span>Stamp</span>
-                <input id="stampMode" class="toggle" type="checkbox" />
-              </label>
-              <label class="control control--toggle">
-                <span>Lock</span>
-                <input id="stampLock" class="toggle" type="checkbox" checked />
-              </label>
-              <button id="stampClearBtn" type="button">Clear stamp</button>
-            </div>
-            <div class="panelRow">
-              <label class="control control--stampSize">
-                <span>W</span>
-                <input id="stampW" type="number" min="1" step="1" inputmode="numeric" />
-              </label>
-              <label class="control control--stampSize">
-                <span>H</span>
-                <input id="stampH" type="number" min="1" step="1" inputmode="numeric" />
-              </label>
-            </div>
-          </div>
         </div>
         <div class="panelHints" aria-label="Hints">
           <div class="hint__small" id="levelHint"></div>
