@@ -276,10 +276,12 @@ const uint P_ICE = 13u;
 const uint P_SALT = 14u;
 const uint P_BRINE = 15u;
 const uint P_WIRE = 16u;
-const uint P_SPARK = 17u;
-const uint P_BATTERY = 18u;
+	const uint P_SPARK = 17u;
+	const uint P_BATTERY = 18u;
+	const uint P_BOT = 19u;
+	const uint P_GLIDER = 20u;
 
-const uint FLAG_IMMOVABLE = 1u << 0u;
+	const uint FLAG_IMMOVABLE = 1u << 0u;
 const uint FLAG_POWDER = 1u << 1u;
 const uint FLAG_LIQUID = 1u << 2u;
 const uint FLAG_GAS = 1u << 3u;
@@ -507,6 +509,65 @@ int cycDiff8(int a, int b) {
 
 uint packPlantMeta(uint dir, uint gene, uint cd) {
   return (dir & 7u) | ((gene & 7u) << 3u) | ((cd & 3u) << 6u);
+}
+
+// Bot meta layout (state.a):
+// - bits 0..1: dir (0=right,1=up,2=left,3=down)
+// - bit 2: role (0=head) (reserved for future multi-cell agents)
+// - bit 3: movedParity (u_tick&1 of last move)
+// - bit 4: hand (0=prefer clockwise turns, 1=prefer counter-clockwise turns)
+// - bits 5..6: cooldown (0..3)
+// - bit 7: version marker (always 1 for the current layout)
+uint packBotMeta(uint dir, uint role, uint movedParity, uint hand, uint cd) {
+  return 128u | (dir & 3u) | ((role & 1u) << 2u) | ((movedParity & 1u) << 3u) | ((hand & 1u) << 4u) | ((cd & 3u) << 5u);
+}
+
+uint botDir(uint meta) { return meta & 3u; }
+uint botRole(uint meta) { return (meta >> 2u) & 1u; }
+uint botMovedParity(uint meta) { return (meta >> 3u) & 1u; }
+uint botHand(uint meta) { return (meta >> 4u) & 1u; }
+uint botCd(uint meta) { return (meta >> 5u) & 3u; }
+
+ivec2 botDirVec(uint dir) {
+  if (dir == 0u) return ivec2(1, 0);
+  if (dir == 1u) return ivec2(0, 1);
+  if (dir == 2u) return ivec2(-1, 0);
+  return ivec2(0, -1);
+}
+
+bool botPassable(uint id) {
+  if (id == P_EMPTY) return true;
+  uint f = loadProps(id).b;
+  return hasFlag(f, FLAG_GAS) || hasFlag(f, FLAG_ENERGY);
+}
+
+bool botCanMove(ivec2 c, uint dir) {
+  ivec2 n = c + botDirVec(dir);
+  if (!inBounds(n)) return false;
+  return botPassable(loadState(n).r);
+}
+
+void agentPaintCell(uint paintId, out uint id, out uint temp, out uint data, out uint meta, out uint e) {
+  id = paintId;
+  temp = u_ambientTemp;
+  data = 0u;
+  meta = 0u;
+
+  if (id == P_MUD) data = 200u;
+  else if (id == P_ACID) data = 180u;
+  else if (id == P_LAVA) temp = 250u;
+  else if (id == P_FIRE) { temp = 245u; data = 80u; }
+  else if (id == P_SMOKE) { temp = 170u; data = 140u; }
+  else if (id == P_STEAM) { temp = 205u; data = 170u; }
+  else if (id == P_PLANT) { data = 120u; meta = 32u; }
+  else if (id == P_ICE) { temp = 90u; }
+  else if (id == P_BRINE) { data = 120u; }
+  else if (id == P_SPARK) { temp = 245u; data = 18u; }
+  else if (id == P_BATTERY) { data = 255u; }
+  else if (id == P_BOT) { meta = 136u; }
+  else if (id == P_GLIDER) { meta = 136u; }
+
+  e = energyForTemp(id, temp);
 }
 
 uint columnMass2(ivec2 c) {
@@ -933,6 +994,44 @@ void selfUpdate(ivec2 c, inout uvec4 s, inout uint e, uint salt) {
     }
 
     if (alive) meta = packPlantMeta(dir, gene, cd);
+  } else if (id == P_BOT) {
+    uint dir = 0u;
+    uint movedParity = 0u;
+    uint hand = 0u;
+    uint cd = 0u;
+
+    if ((meta & 128u) == 0u) {
+      // Legacy bot meta:
+      // bit0 dir (0=right,1=left), bit2 lastMoveTickParity, bits3..4 cooldown.
+      uint oldDir = meta & 1u;
+      movedParity = (meta >> 2u) & 1u;
+      cd = (meta >> 3u) & 3u;
+      dir = (oldDir == 0u) ? 0u : 2u;
+      hand = 0u;
+    } else {
+      dir = botDir(meta);
+      movedParity = botMovedParity(meta);
+      hand = botHand(meta);
+      cd = botCd(meta);
+    }
+    if (cd > 0u) cd -= 1u;
+
+    bool blocked = !botCanMove(c, dir);
+    if (blocked && cd == 0u) {
+      uint cw = (dir + 3u) & 3u;
+      uint ccw = (dir + 1u) & 3u;
+      uint pref = (hand == 0u) ? cw : ccw;
+      uint alt = (hand == 0u) ? ccw : cw;
+      uint back = dir ^ 2u;
+
+      if (botCanMove(c, pref)) dir = pref;
+      else if (botCanMove(c, alt)) dir = alt;
+      else dir = back;
+
+      cd = 2u;
+    }
+
+    meta = packBotMeta(dir, 0u, movedParity, hand, cd);
   } else if (id == P_ACID) {
     // Acid slowly loses strength.
     if (data > 0u && (randByte(uvec2(c), salt) < 6u)) data -= 1u;
@@ -1391,6 +1490,106 @@ void main() {
     if (prev != aId) aE = energyForTemp(aId, aTemp);
   }
 
+  // Bot: a single-cell agent that moves along its heading and paints a trail via state.b (paint id).
+  // Moves at most once per tick using movedParity.
+  uint tickParity = u_tick & 1u;
+  if (u_dir.y == 0 && u_dir.x != 0) {
+    // Horizontal pass: aC is left of bC.
+    if (aId == P_BOT && botDir(aMeta) == 0u && botMovedParity(aMeta) != tickParity && botPassable(bId)) {
+      uint paintId = aData;
+      uint hand = botHand(aMeta);
+      uint cd = botCd(aMeta);
+      bId = P_BOT;
+      bData = aData;
+      bMeta = packBotMeta(0u, 0u, tickParity, hand, cd);
+      bE = aE;
+      bTemp = aTemp;
+      agentPaintCell(paintId, aId, aTemp, aData, aMeta, aE);
+    } else if (bId == P_BOT && botDir(bMeta) == 2u && botMovedParity(bMeta) != tickParity && botPassable(aId)) {
+      uint paintId = bData;
+      uint hand = botHand(bMeta);
+      uint cd = botCd(bMeta);
+      aId = P_BOT;
+      aData = bData;
+      aMeta = packBotMeta(2u, 0u, tickParity, hand, cd);
+      aE = bE;
+      aTemp = bTemp;
+      agentPaintCell(paintId, bId, bTemp, bData, bMeta, bE);
+    }
+  } else if (u_dir.x == 0 && u_dir.y != 0) {
+    // Vertical pass (down pairs): aC is above bC (u_dir = (0,-1)).
+    if (aId == P_BOT && botDir(aMeta) == 3u && botMovedParity(aMeta) != tickParity && botPassable(bId)) {
+      uint paintId = aData;
+      uint hand = botHand(aMeta);
+      uint cd = botCd(aMeta);
+      bId = P_BOT;
+      bData = aData;
+      bMeta = packBotMeta(3u, 0u, tickParity, hand, cd);
+      bE = aE;
+      bTemp = aTemp;
+      agentPaintCell(paintId, aId, aTemp, aData, aMeta, aE);
+    } else if (bId == P_BOT && botDir(bMeta) == 1u && botMovedParity(bMeta) != tickParity && botPassable(aId)) {
+      uint paintId = bData;
+      uint hand = botHand(bMeta);
+      uint cd = botCd(bMeta);
+      aId = P_BOT;
+      aData = bData;
+      aMeta = packBotMeta(1u, 0u, tickParity, hand, cd);
+      aE = bE;
+      aTemp = bTemp;
+      agentPaintCell(paintId, bId, bTemp, bData, bMeta, bE);
+    }
+  }
+
+  // Glider: a straight-line single-cell agent that can paint a trail via state.b (paint id).
+  if (u_dir.y == 0 && u_dir.x != 0) {
+    // Horizontal pass: aC is left of bC.
+    if (aId == P_GLIDER && botDir(aMeta) == 0u && botMovedParity(aMeta) != tickParity && botPassable(bId)) {
+      uint paintId = aData;
+      uint hand = botHand(aMeta);
+      uint cd = botCd(aMeta);
+      bId = P_GLIDER;
+      bData = aData;
+      bMeta = packBotMeta(0u, 0u, tickParity, hand, cd);
+      bE = aE;
+      bTemp = aTemp;
+      agentPaintCell(paintId, aId, aTemp, aData, aMeta, aE);
+    } else if (bId == P_GLIDER && botDir(bMeta) == 2u && botMovedParity(bMeta) != tickParity && botPassable(aId)) {
+      uint paintId = bData;
+      uint hand = botHand(bMeta);
+      uint cd = botCd(bMeta);
+      aId = P_GLIDER;
+      aData = bData;
+      aMeta = packBotMeta(2u, 0u, tickParity, hand, cd);
+      aE = bE;
+      aTemp = bTemp;
+      agentPaintCell(paintId, bId, bTemp, bData, bMeta, bE);
+    }
+  } else if (u_dir.x == 0 && u_dir.y != 0) {
+    // Vertical pass (down pairs): aC is above bC (u_dir = (0,-1)).
+    if (aId == P_GLIDER && botDir(aMeta) == 3u && botMovedParity(aMeta) != tickParity && botPassable(bId)) {
+      uint paintId = aData;
+      uint hand = botHand(aMeta);
+      uint cd = botCd(aMeta);
+      bId = P_GLIDER;
+      bData = aData;
+      bMeta = packBotMeta(3u, 0u, tickParity, hand, cd);
+      bE = aE;
+      bTemp = aTemp;
+      agentPaintCell(paintId, aId, aTemp, aData, aMeta, aE);
+    } else if (bId == P_GLIDER && botDir(bMeta) == 1u && botMovedParity(bMeta) != tickParity && botPassable(aId)) {
+      uint paintId = bData;
+      uint hand = botHand(bMeta);
+      uint cd = botCd(bMeta);
+      aId = P_GLIDER;
+      aData = bData;
+      aMeta = packBotMeta(1u, 0u, tickParity, hand, cd);
+      aE = bE;
+      aTemp = bTemp;
+      agentPaintCell(paintId, bId, bTemp, bData, bMeta, bE);
+    }
+  }
+
   // Apply the updated ids/data back.
   a.r = aId;
   b.r = bId;
@@ -1562,7 +1761,9 @@ const uint P_SMOKE = 9u;
 const uint P_SALT = 14u;
 const uint P_BRINE = 15u;
 const uint P_WIRE = 16u;
-const uint P_SPARK = 17u;
+	const uint P_SPARK = 17u;
+	const uint P_BOT = 19u;
+	const uint P_GLIDER = 20u;
 
 uvec4 loadThermal0(uint id) {
   return texelFetch(u_thermal0, ivec2(int(id), 0), 0);
@@ -1668,6 +1869,11 @@ void main() {
           nextCell.g = (cur.g + s.g) >> 1;
           if (nextCell.b < 120u) nextCell.b = 120u;
           changed = true;
+        } else if ((curId == P_BOT || curId == P_GLIDER) && (s.r != P_BOT && s.r != P_GLIDER)) {
+          // Load an agent's "paint" id (stored in state.b).
+          nextCell = cur;
+          nextCell.b = s.r;
+          changed = true;
         }
 
         if (!changed) {
@@ -1752,6 +1958,8 @@ const uint P_BRINE = 15u;
 const uint P_WIRE = 16u;
 const uint P_SPARK = 17u;
 const uint P_BATTERY = 18u;
+const uint P_BOT = 19u;
+const uint P_GLIDER = 20u;
 
 uvec4 loadState(ivec2 c) {
   return texelFetch(u_state, c, 0);
@@ -1817,6 +2025,8 @@ uvec4 makeCell(uint id) {
   else if (id == P_BRINE) { data = 120u; }
   else if (id == P_SPARK) { temp = 245u; data = 18u; }
   else if (id == P_BATTERY) { data = 255u; }
+  else if (id == P_BOT) { data = 0u; meta = 136u; }
+  else if (id == P_GLIDER) { data = 0u; meta = 136u; }
   return uvec4(id, temp, data, meta);
 }
 

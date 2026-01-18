@@ -438,8 +438,9 @@ function forEachLinePoint(x0, y0, x1, y1, fn) {
  * @param {number} x
  * @param {number} y
  * @param {'paint'|'erase'} mode
+ * @param {0|1|2|3|null} [agentDir]
  */
-function paintAt(x, y, mode) {
+function paintAt(x, y, mode, agentDir) {
   const radius = Number(brushSize.value) | 0;
   const inLevel = activeLevel.id !== LEVEL_ID.SANDBOX;
 
@@ -460,7 +461,16 @@ function paintAt(x, y, mode) {
   const base = defaultCellForParticle(/** @type {any} */ (id));
   const isErase = id === Particle.EMPTY;
   const doAdd = !isErase && addMode.checked;
-  sim.paintCircle(x, y, { id, temp: base.temp, data: base.data, flags: base.flags }, radius, { addMode: doAdd });
+
+  let flags = base.flags;
+  if (
+    agentDir !== null &&
+    (id === Particle.BOT || id === Particle.GLIDER)
+  ) {
+    flags = (flags & ~3) | agentDir;
+  }
+
+  sim.paintCircle(x, y, { id, temp: base.temp, data: base.data, flags }, radius, { addMode: doAdd });
 }
 
 /**
@@ -1483,7 +1493,15 @@ function loop(now) {
     const y0 = brush.lastY;
     const x1 = brush.x;
     const y1 = brush.y;
-    forEachLinePoint(x0, y0, x1, y1, (x, y) => paintAt(x, y, brush.mode));
+    const dx = x1 - x0;
+    const dy = y1 - y0;
+    /** @type {0|1|2|3|null} */
+    let agentDir = null;
+    if (dx !== 0 || dy !== 0) {
+      if (Math.abs(dx) >= Math.abs(dy)) agentDir = dx > 0 ? 0 : 2;
+      else agentDir = dy > 0 ? 1 : 3;
+    }
+    forEachLinePoint(x0, y0, x1, y1, (x, y) => paintAt(x, y, brush.mode, agentDir));
     brush.lastX = x1;
     brush.lastY = y1;
   }

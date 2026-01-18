@@ -23,6 +23,8 @@ export const Particle = /** @type {const} */ ({
   WIRE: 16,
   SPARK: 17,
   BATTERY: 18,
+  BOT: 19,
+  GLIDER: 20,
 });
 
 export const ParticleFlag = /** @type {const} */ ({
@@ -220,6 +222,22 @@ export function createParticleDefs() {
     mobility: 0,
     flags: ParticleFlag.IMMOVABLE,
   });
+  defs[Particle.BOT] = makeDef(Particle.BOT, {
+    name: "Bot",
+    color: [214, 214, 224],
+    density: 250,
+    conductivity: 200,
+    mobility: 0,
+    flags: ParticleFlag.IMMOVABLE,
+  });
+  defs[Particle.GLIDER] = makeDef(Particle.GLIDER, {
+    name: "Glider",
+    color: [232, 226, 128],
+    density: 250,
+    conductivity: 200,
+    mobility: 0,
+    flags: ParticleFlag.IMMOVABLE,
+  });
 
   return defs;
 }
@@ -291,6 +309,18 @@ export function defaultCellForParticle(id) {
       return { temp: 245, data: 18, flags: 0 };
     case Particle.BATTERY:
       return { temp: DEFAULT_AMBIENT_TEMP, data: 255, flags: 0 };
+    case Particle.BOT:
+      // `flags` is per-cell metadata in state.a; for Bot it encodes:
+      // bits 0..1 dir (0=right,1=up,2=left,3=down), bit2 role (reserved),
+      // bit3 lastMoveTickParity, bit4 hand (turn preference), bits5..6 cooldown.
+      // bit7 is a version marker and should be 1.
+      // `data` (state.b) is the agent's paint target particle id (0 means paint Air/Empty).
+      // Default movedParity=1 so freshly-painted bots can move on tick 0.
+      return { temp: DEFAULT_AMBIENT_TEMP, data: 0, flags: 136 };
+    case Particle.GLIDER:
+      // Shares the Bot meta layout (dir/movedParity/etc), but never turns.
+      // `data` (state.b) is the agent's paint target particle id (0 means paint Air/Empty).
+      return { temp: DEFAULT_AMBIENT_TEMP, data: 0, flags: 136 };
     case Particle.WIRE:
       // `flags` is per-cell metadata in state.a; for Wire it encodes an arc cooldown.
       return { temp: DEFAULT_AMBIENT_TEMP, data: 0, flags: 0 };
@@ -371,6 +401,10 @@ export function createThermalDefs() {
 
   // Stone is a decent heat reservoir.
   defs[Particle.STONE].heatCapacity = 28;
+
+  // Bot: moderate heat capacity so it doesn't flash hot/cold instantly.
+  defs[Particle.BOT].heatCapacity = 20;
+  defs[Particle.GLIDER].heatCapacity = 20;
 
   return defs;
 }
