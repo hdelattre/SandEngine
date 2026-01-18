@@ -145,11 +145,39 @@ let stamp = null;
 const camera = { centerX: 0.5, centerY: 0.5, zoom: 1.0 };
 /** @type {{down: boolean, pointerId: number, startX: number, startY: number, startCenterX: number, startCenterY: number}} */
 const pan = { down: false, pointerId: -1, startX: 0, startY: 0, startCenterX: 0.5, startCenterY: 0.5 };
+/** @type {{has: boolean, clientX: number, clientY: number}} */
+const pointerScreen = { has: false, clientX: 0, clientY: 0 };
 
 /** @type {Map<number, {x: number, y: number}>} */
 const touchPoints = new Map();
 /** @type {null | {startDist: number, startZoom: number, worldU: number, worldV: number}} */
 let pinch = null;
+
+/**
+ * @param {number} clientX
+ * @param {number} clientY
+ * @returns {{x: number, y: number}}
+ */
+function screenToGrid(clientX, clientY) {
+  const rect = canvas.getBoundingClientRect();
+  const nx = (clientX - rect.left) / rect.width;
+  const ny = (clientY - rect.top) / rect.height;
+  const su = clamp(nx, 0, 1);
+  const sv = clamp(1 - ny, 0, 1);
+  const u = (su - 0.5) / camera.zoom + camera.centerX;
+  const v = (sv - 0.5) / camera.zoom + camera.centerY;
+  const x = clampInt(Math.floor(u * sim.width), 0, sim.width - 1);
+  const y = clampInt(Math.floor(v * sim.height), 0, sim.height - 1);
+  return { x, y };
+}
+
+function updateCursorFromScreen() {
+  if (!pointerScreen.has) return;
+  const { x, y } = screenToGrid(pointerScreen.clientX, pointerScreen.clientY);
+  cursor.x = x;
+  cursor.y = y;
+  cursor.has = true;
+}
 
 function clampCamera() {
   camera.zoom = clamp(Number(camera.zoom), 1, 8);
@@ -159,6 +187,7 @@ function clampCamera() {
   sim.camCenterX = camera.centerX;
   sim.camCenterY = camera.centerY;
   sim.camZoom = camera.zoom;
+  updateCursorFromScreen();
 }
 
 /**
@@ -166,16 +195,7 @@ function clampCamera() {
  * @returns {{x: number, y: number}}
  */
 function eventToGrid(e) {
-  const rect = canvas.getBoundingClientRect();
-  const nx = (e.clientX - rect.left) / rect.width;
-  const ny = (e.clientY - rect.top) / rect.height;
-  const su = clamp(nx, 0, 1);
-  const sv = clamp(1 - ny, 0, 1);
-  const u = (su - 0.5) / camera.zoom + camera.centerX;
-  const v = (sv - 0.5) / camera.zoom + camera.centerY;
-  const x = clampInt(Math.floor(u * sim.width), 0, sim.width - 1);
-  const y = clampInt(Math.floor(v * sim.height), 0, sim.height - 1);
-  return { x, y };
+  return screenToGrid(e.clientX, e.clientY);
 }
 
 /**
@@ -323,6 +343,9 @@ clampCamera();
 
 canvas.addEventListener("pointerdown", (e) => {
   canvas.setPointerCapture(e.pointerId);
+  pointerScreen.has = true;
+  pointerScreen.clientX = e.clientX;
+  pointerScreen.clientY = e.clientY;
   const { x, y } = eventToGrid(e);
 
   if (e.pointerType === "touch") {
@@ -384,6 +407,10 @@ canvas.addEventListener("pointerdown", (e) => {
 });
 
 canvas.addEventListener("pointermove", (e) => {
+  pointerScreen.has = true;
+  pointerScreen.clientX = e.clientX;
+  pointerScreen.clientY = e.clientY;
+
   if (e.pointerType === "touch" && touchPoints.has(e.pointerId)) {
     touchPoints.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pinch && touchPoints.size >= 2) {
@@ -438,6 +465,7 @@ canvas.addEventListener("pointerup", endBrush);
 canvas.addEventListener("pointercancel", endBrush);
 canvas.addEventListener("pointerleave", () => {
   cursor.has = false;
+  pointerScreen.has = false;
 });
 
 canvas.addEventListener("pointerup", (e) => {
@@ -445,6 +473,8 @@ canvas.addEventListener("pointerup", (e) => {
   if (e.pointerType === "touch") {
     touchPoints.delete(e.pointerId);
     if (touchPoints.size < 2) pinch = null;
+    pointerScreen.has = false;
+    cursor.has = false;
   }
 });
 canvas.addEventListener("pointercancel", (e) => {
@@ -452,6 +482,8 @@ canvas.addEventListener("pointercancel", (e) => {
   if (e.pointerType === "touch") {
     touchPoints.delete(e.pointerId);
     if (touchPoints.size < 2) pinch = null;
+    pointerScreen.has = false;
+    cursor.has = false;
   }
 });
 
@@ -459,6 +491,9 @@ canvas.addEventListener(
   "wheel",
   (e) => {
     e.preventDefault();
+    pointerScreen.has = true;
+    pointerScreen.clientX = e.clientX;
+    pointerScreen.clientY = e.clientY;
     const rect = canvas.getBoundingClientRect();
     const nx = (e.clientX - rect.left) / rect.width;
     const ny = (e.clientY - rect.top) / rect.height;
@@ -909,6 +944,17 @@ window.addEventListener("keydown", (e) => {
   // Don't treat OS/browser shortcuts as simulation hotkeys (e.g. Cmd+V would
   // otherwise trigger the "v" particle hotkey).
   if (e.metaKey || e.ctrlKey) return;
+
+  if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "ArrowDown") {
+    e.preventDefault();
+    const step = (e.shiftKey ? 0.2 : 0.08) / camera.zoom;
+    if (e.key === "ArrowLeft") camera.centerX -= step;
+    else if (e.key === "ArrowRight") camera.centerX += step;
+    else if (e.key === "ArrowUp") camera.centerY += step;
+    else camera.centerY -= step;
+    clampCamera();
+    return;
+  }
 
   if (!settingsPanel.hidden && e.key === "Escape") {
     e.preventDefault();
