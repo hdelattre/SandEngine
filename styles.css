@@ -130,13 +130,30 @@ body {
   margin-top: 10px;
   padding-top: 10px;
   border-top: 1px solid color-mix(in oklab, var(--border), transparent 25%);
+  max-width: 1100px;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .panelGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 8px;
   align-items: center;
+  max-width: 1100px;
+  margin: 0 auto;
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 660px) {
+  .panelGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 980px) {
+  .panelGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 .panelGroup {
@@ -145,6 +162,43 @@ body {
   gap: 8px;
   min-width: 0;
   flex-wrap: wrap;
+}
+
+.panelGroup--paste,
+.panelGroup--stamp {
+  grid-column: 1 / -1;
+}
+
+.panelGroup--stamp {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.panelGroup--paste {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: stretch;
+}
+
+.panelGroup--paste > .control {
+  min-width: 0;
+}
+
+.panelRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+.panelRow > .control {
+  flex: 1 1 auto;
+}
+
+.panelRow > button {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .panelGroup > .control {
@@ -300,21 +354,20 @@ select {
 }
 
 .control--select select {
-  min-width: 128px;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .control--range input[type="range"] {
-  width: 150px;
+  width: auto;
+  flex: 1 1 auto;
+  min-width: 120px;
   accent-color: var(--accent);
 }
 
 @media (max-width: 720px) {
-  .control--select select {
-    min-width: 112px;
-  }
-
   .control--range input[type="range"] {
-    width: 130px;
+    min-width: 96px;
   }
 }
 

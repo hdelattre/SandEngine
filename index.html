@@ -79,23 +79,27 @@
             <button id="pasteBtn" type="button">Paste</button>
           </div>
           <div class="panelGroup panelGroup--stamp">
-            <label class="control control--toggle">
-              <span>Stamp</span>
-              <input id="stampMode" class="toggle" type="checkbox" />
-            </label>
-            <label class="control control--stampSize">
-              <span>W</span>
-              <input id="stampW" type="number" min="1" step="1" inputmode="numeric" />
-            </label>
-            <label class="control control--stampSize">
-              <span>H</span>
-              <input id="stampH" type="number" min="1" step="1" inputmode="numeric" />
-            </label>
-            <label class="control control--toggle">
-              <span>Lock</span>
-              <input id="stampLock" class="toggle" type="checkbox" checked />
-            </label>
-            <button id="stampClearBtn" type="button">Clear stamp</button>
+            <div class="panelRow">
+              <label class="control control--toggle">
+                <span>Stamp</span>
+                <input id="stampMode" class="toggle" type="checkbox" />
+              </label>
+              <label class="control control--toggle">
+                <span>Lock</span>
+                <input id="stampLock" class="toggle" type="checkbox" checked />
+              </label>
+              <button id="stampClearBtn" type="button">Clear stamp</button>
+            </div>
+            <div class="panelRow">
+              <label class="control control--stampSize">
+                <span>W</span>
+                <input id="stampW" type="number" min="1" step="1" inputmode="numeric" />
+              </label>
+              <label class="control control--stampSize">
+                <span>H</span>
+                <input id="stampH" type="number" min="1" step="1" inputmode="numeric" />
+              </label>
+            </div>
           </div>
         </div>
         <div class="panelHints" aria-label="Hints">
