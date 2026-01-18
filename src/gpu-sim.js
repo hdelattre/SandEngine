@@ -51,10 +51,24 @@ export class GpuSim {
     this.camZoom = 1.0;
     this.golEnabled = false;
     this.golInterval = 1;
+    this.caEnabled = false;
+    this.caInterval = 1;
+    this.caRule = 30;
+    this.caPaintId = 1;
     /** @type {null | {program: WebGLProgram, u: Record<string, WebGLUniformLocation>}} */
     this._gol = null;
     /** @type {Promise<void> | null} */
     this._golLoading = null;
+    /** @type {null | {program: WebGLProgram, u: Record<string, WebGLUniformLocation>}} */
+    this._caUpdate = null;
+    /** @type {null | {program: WebGLProgram, u: Record<string, WebGLUniformLocation>}} */
+    this._caApply = null;
+    /** @type {Promise<void> | null} */
+    this._caLoading = null;
+    this._caTex = /** @type {[WebGLTexture | null, WebGLTexture | null]} */ ([null, null]);
+    this._caFb = /** @type {[WebGLFramebuffer | null, WebGLFramebuffer | null]} */ ([null, null]);
+    this._caFront = 0;
+    this._caWidth = 0;
 
     this._vao = createFullscreenVao(gl);
 
@@ -217,6 +231,109 @@ export class GpuSim {
   }
 
   /**
+   * @param {string} frag
+   * @returns {{program: WebGLProgram, u: Record<string, WebGLUniformLocation>}}
+   */
+  _createCaUpdateProgram(frag) {
+    const gl = this.gl;
+    const program = createProgram(gl, FULLSCREEN_VERT, frag);
+    return {
+      program,
+      u: {
+        ca: mustGetUniform(gl, program, "u_ca"),
+        width: mustGetUniform(gl, program, "u_width"),
+        rule: mustGetUniform(gl, program, "u_rule"),
+      },
+    };
+  }
+
+  /**
+   * @param {string} frag
+   * @returns {{program: WebGLProgram, u: Record<string, WebGLUniformLocation>}}
+   */
+  _createCaApplyProgram(frag) {
+    const gl = this.gl;
+    const program = createProgram(gl, FULLSCREEN_VERT, frag);
+    return {
+      program,
+      u: {
+        state: mustGetUniform(gl, program, "u_state"),
+        energy: mustGetUniform(gl, program, "u_energy"),
+        ca: mustGetUniform(gl, program, "u_ca"),
+        thermal0: mustGetUniform(gl, program, "u_thermal0"),
+        thermal1: mustGetUniform(gl, program, "u_thermal1"),
+        latent: mustGetUniform(gl, program, "u_latent"),
+        size: mustGetUniform(gl, program, "u_size"),
+        ambientTemp: mustGetUniform(gl, program, "u_ambientTemp"),
+        paintId: mustGetUniform(gl, program, "u_paintId"),
+        emitY: mustGetUniform(gl, program, "u_emitY"),
+      },
+    };
+  }
+
+  _ensureCaBuffers() {
+    const gl = this.gl;
+    const w = this.width | 0;
+    if (w <= 0) return;
+    if (this._caTex[0] && this._caWidth === w) return;
+
+    for (let i = 0; i < 2; i++) {
+      if (this._caTex[i]) gl.deleteTexture(this._caTex[i]);
+      if (this._caFb[i]) gl.deleteFramebuffer(this._caFb[i]);
+      this._caTex[i] = null;
+      this._caFb[i] = null;
+    }
+
+    const init = new Uint8Array(w * 4);
+    const cx = Math.max(0, Math.min(w - 1, w >> 1));
+    init[cx * 4 + 0] = 1;
+
+    for (let i = 0; i < 2; i++) {
+      const tex = createRgba8uiTexture(gl, { width: w, height: 1, data: init });
+      const fb = createFramebufferForTextures(gl, [tex]);
+      this._caTex[i] = tex;
+      this._caFb[i] = fb;
+    }
+
+    this._caFront = 0;
+    this._caWidth = w;
+  }
+
+  /**
+   * Lazy-loads + compiles the Wolfram CA programs, and toggles whether it runs.
+   * @param {boolean} enabled
+   * @returns {Promise<void>}
+   */
+  async setCaEnabled(enabled) {
+    if (!enabled) {
+      this.caEnabled = false;
+      return;
+    }
+    if (this._caUpdate && this._caApply && this._caTex[0]) {
+      this.caEnabled = true;
+      return;
+    }
+
+    if (!this._caLoading) {
+      this._caLoading = (async () => {
+        try {
+          const mod = await import("./shaders-wolfram.js");
+          this._caUpdate = this._createCaUpdateProgram(mod.WOLFRAM_UPDATE_FRAG);
+          this._caApply = this._createCaApplyProgram(mod.WOLFRAM_APPLY_FRAG);
+          this._ensureCaBuffers();
+        } finally {
+          // Allow retry on failure.
+          this._caLoading = null;
+        }
+      })();
+    }
+
+    await this._caLoading;
+    if (!this._caUpdate || !this._caApply || !this._caTex[0]) throw new Error("Wolfram CA failed to initialize");
+    this.caEnabled = true;
+  }
+
+  /**
    * @returns {{program: WebGLProgram, u: Record<string, WebGLUniformLocation>}}
    */
   _createPaintProgram() {
@@ -312,6 +429,7 @@ export class GpuSim {
     this._front = 0;
     this.tick = 0;
     this.clear();
+    if (this._caTex[0]) this._ensureCaBuffers();
   }
 
   /**
@@ -487,6 +605,72 @@ export class GpuSim {
     this._swap();
   }
 
+  _caUpdatePass() {
+    const ca = this._caUpdate;
+    if (!ca) return;
+    const src = this._caTex[this._caFront];
+    const dst = this._caFb[1 - this._caFront];
+    if (!src || !dst) return;
+
+    const gl = this.gl;
+    const { program, u } = ca;
+
+    gl.useProgram(program);
+    gl.uniform1i(u.width, this.width | 0);
+    gl.uniform1ui(u.rule, (this.caRule & 255) >>> 0);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, src);
+    gl.uniform1i(u.ca, 0);
+
+    this._draw(program, dst, this.width, 1);
+    this._caFront = 1 - this._caFront;
+  }
+
+  _caApplyPass() {
+    const ca = this._caApply;
+    if (!ca) return;
+    const caTex = this._caTex[this._caFront];
+    if (!caTex) return;
+
+    const gl = this.gl;
+    const { program, u } = ca;
+    const emitY = Math.max(0, Math.min(this.height - 1, Math.max(1, this.height - 2)));
+
+    gl.useProgram(program);
+    gl.uniform2i(u.size, this.width, this.height);
+    gl.uniform1ui(u.ambientTemp, this.ambientTemp >>> 0);
+    gl.uniform1ui(u.paintId, (this.caPaintId & 255) >>> 0);
+    gl.uniform1i(u.emitY, emitY | 0);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this._srcTex());
+    gl.uniform1i(u.state, 0);
+
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this._srcEnergyTex());
+    gl.uniform1i(u.energy, 1);
+
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, caTex);
+    gl.uniform1i(u.ca, 2);
+
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, this._thermal0Tex);
+    gl.uniform1i(u.thermal0, 3);
+
+    gl.activeTexture(gl.TEXTURE4);
+    gl.bindTexture(gl.TEXTURE_2D, this._thermal1Tex);
+    gl.uniform1i(u.thermal1, 4);
+
+    gl.activeTexture(gl.TEXTURE5);
+    gl.bindTexture(gl.TEXTURE_2D, this._latentTex);
+    gl.uniform1i(u.latent, 5);
+
+    this._draw(program, this._dstFb(), this.width, this.height);
+    this._swap();
+  }
+
   _golPass() {
     const gol = this._gol;
     if (!gol) return;
@@ -562,6 +746,14 @@ export class GpuSim {
     if (this.golEnabled && this._gol) {
       const interval = Math.max(1, this.golInterval | 0);
       if (((this.tick >>> 0) % interval) === 0) this._golPass();
+    }
+
+    if (this.caEnabled && this._caUpdate && this._caApply && this._caTex[0]) {
+      const interval = Math.max(1, this.caInterval | 0);
+      if (((this.tick >>> 0) % interval) === 0) {
+        this._caUpdatePass();
+        this._caApplyPass();
+      }
     }
 
     this.tick++;

@@ -102,6 +102,10 @@ const stampW = /** @type {HTMLInputElement} */ (document.getElementById("stampW"
 const stampH = /** @type {HTMLInputElement} */ (document.getElementById("stampH"));
 const stampLock = /** @type {HTMLInputElement} */ (document.getElementById("stampLock"));
 const addMode = /** @type {HTMLInputElement} */ (document.getElementById("addMode"));
+const caRule = /** @type {HTMLInputElement} */ (document.getElementById("caRule"));
+const caInterval = /** @type {HTMLInputElement} */ (document.getElementById("caInterval"));
+const caPaintSelect = /** @type {HTMLSelectElement} */ (document.getElementById("caPaintSelect"));
+const caMode = /** @type {HTMLInputElement} */ (document.getElementById("caMode"));
 const golMode = /** @type {HTMLInputElement} */ (document.getElementById("golMode"));
 const golRateControl = /** @type {HTMLElement} */ (document.getElementById("golRateControl"));
 const golRate = /** @type {HTMLInputElement} */ (document.getElementById("golRate"));
@@ -110,6 +114,8 @@ const settingsBtn = /** @type {HTMLButtonElement} */ (document.getElementById("s
 const settingsPanel = /** @type {HTMLDivElement} */ (document.getElementById("settingsPanel"));
 const brushSizeValue = /** @type {HTMLOutputElement | null} */ (document.getElementById("brushSizeValue"));
 const simRateValue = /** @type {HTMLOutputElement | null} */ (document.getElementById("simRateValue"));
+const caRuleValue = /** @type {HTMLOutputElement | null} */ (document.getElementById("caRuleValue"));
+const caIntervalValue = /** @type {HTMLOutputElement | null} */ (document.getElementById("caIntervalValue"));
 const golRateValue = /** @type {HTMLOutputElement | null} */ (document.getElementById("golRateValue"));
 const zoomValue = /** @type {HTMLOutputElement | null} */ (document.getElementById("zoomValue"));
 const topbar = /** @type {HTMLElement | null} */ (document.querySelector("header.topbar"));
@@ -127,8 +133,14 @@ for (const id of Object.values(Particle)) {
   opt.value = String(def.id);
   opt.textContent = def.name;
   particleSelect.appendChild(opt);
+
+  const opt2 = document.createElement("option");
+  opt2.value = String(def.id);
+  opt2.textContent = def.name;
+  caPaintSelect.appendChild(opt2);
 }
 particleSelect.value = String(Particle.SAND);
+caPaintSelect.value = String(Particle.SAND);
 
 const paletteTexels = buildPaletteTexels(particleDefs);
 const propTexels = buildPropTexels(particleDefs);
@@ -955,31 +967,57 @@ clearBtn.addEventListener("click", () => {
   else sim.clear();
 });
 
-	viewSelect.addEventListener("change", () => {
-	  sim.setViewMode(/** @type {ViewMode} */ (viewSelect.value));
-	});
+viewSelect.addEventListener("change", () => {
+  sim.setViewMode(/** @type {ViewMode} */ (viewSelect.value));
+});
 
-	sim.golInterval = Math.max(1, Number(golRate.value) | 0);
-	golRate.value = String(sim.golInterval);
-	golRateControl.hidden = false;
-	golRate.disabled = false;
-	golMode.checked = sim.golEnabled;
-	golMode.addEventListener("change", async () => {
-	  const want = golMode.checked;
-	  golMode.disabled = true;
-	  golRate.disabled = true;
-	  try {
-	    await sim.setGolEnabled(want);
-	  } catch (err) {
-	    const msg = err instanceof Error ? err.message : String(err);
-	    notify(`life failed: ${msg}`);
-	  } finally {
-	    golMode.checked = sim.golEnabled;
-	    golRateControl.hidden = false;
-	    golRate.disabled = false;
-	    golMode.disabled = false;
-	  }
-	});
+sim.caRule = clampInt(Number(caRule.value) || 0, 0, 255);
+caRule.value = String(sim.caRule);
+sim.caInterval = Math.max(1, Number(caInterval.value) | 0);
+caInterval.value = String(sim.caInterval);
+sim.caPaintId = Number(caPaintSelect.value) | 0;
+caPaintSelect.value = String(sim.caPaintId);
+
+caMode.checked = sim.caEnabled;
+caMode.addEventListener("change", async () => {
+  const want = caMode.checked;
+  caMode.disabled = true;
+  try {
+    await sim.setCaEnabled(want);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    notify(`ca failed: ${msg}`);
+  } finally {
+    caMode.checked = sim.caEnabled;
+    caMode.disabled = false;
+  }
+});
+
+caPaintSelect.addEventListener("change", () => {
+  sim.caPaintId = Number(caPaintSelect.value) | 0;
+});
+
+sim.golInterval = Math.max(1, Number(golRate.value) | 0);
+golRate.value = String(sim.golInterval);
+golRateControl.hidden = false;
+golRate.disabled = false;
+golMode.checked = sim.golEnabled;
+golMode.addEventListener("change", async () => {
+  const want = golMode.checked;
+  golMode.disabled = true;
+  golRate.disabled = true;
+  try {
+    await sim.setGolEnabled(want);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    notify(`life failed: ${msg}`);
+  } finally {
+    golMode.checked = sim.golEnabled;
+    golRateControl.hidden = false;
+    golRate.disabled = false;
+    golMode.disabled = false;
+  }
+});
 
 resSelect.addEventListener("change", () => {
   if (activeLevel.id !== LEVEL_ID.SANDBOX) return;
@@ -1032,32 +1070,54 @@ let lastStatusNow = 0;
 let simEffectiveSpsEma = 0;
 let simTargetSpsForUi = 0;
 let simSlow = false;
-	let lastUserRateChangeNow = performance.now();
-	let lastAutoTuneNow = 0;
+let lastUserRateChangeNow = performance.now();
+let lastAutoTuneNow = 0;
 
-	function syncGolRateReadout() {
-	  if (!golRateValue) return;
-	  const n = Math.max(1, Number(golRate.value) | 0);
-	  golRateValue.textContent = n === 1 ? "every tick" : `every ${n} ticks`;
-	}
+function syncCaRuleReadout() {
+  if (!caRuleValue) return;
+  const n = clampInt(Number(caRule.value) || 0, 0, 255);
+  caRuleValue.textContent = String(n);
+}
 
-	function syncRangeReadouts() {
-	  if (brushSizeValue) brushSizeValue.textContent = brushSize.value;
-	  if (zoomValue) zoomValue.textContent = `${Number(camera.zoom).toFixed(1)}×`;
-	  syncGolRateReadout();
-	  syncSimRateReadout();
-	}
+function syncCaIntervalReadout() {
+  if (!caIntervalValue) return;
+  const n = Math.max(1, Number(caInterval.value) | 0);
+  caIntervalValue.textContent = n === 1 ? "every tick" : `every ${n} ticks`;
+}
 
-	brushSize.addEventListener("input", syncRangeReadouts);
-	simRate.addEventListener("input", syncRangeReadouts);
-	golRate.addEventListener("input", syncRangeReadouts);
-	golRate.addEventListener("input", () => {
-	  sim.golInterval = Math.max(1, Number(golRate.value) | 0);
-	});
-	simRate.addEventListener("input", () => {
-	  lastUserRateChangeNow = performance.now();
-	});
-	syncRangeReadouts();
+function syncGolRateReadout() {
+  if (!golRateValue) return;
+  const n = Math.max(1, Number(golRate.value) | 0);
+  golRateValue.textContent = n === 1 ? "every tick" : `every ${n} ticks`;
+}
+
+function syncRangeReadouts() {
+  if (brushSizeValue) brushSizeValue.textContent = brushSize.value;
+  if (zoomValue) zoomValue.textContent = `${Number(camera.zoom).toFixed(1)}×`;
+  syncCaRuleReadout();
+  syncCaIntervalReadout();
+  syncGolRateReadout();
+  syncSimRateReadout();
+}
+
+brushSize.addEventListener("input", syncRangeReadouts);
+simRate.addEventListener("input", syncRangeReadouts);
+caRule.addEventListener("input", syncRangeReadouts);
+caRule.addEventListener("input", () => {
+  sim.caRule = clampInt(Number(caRule.value) || 0, 0, 255);
+});
+caInterval.addEventListener("input", syncRangeReadouts);
+caInterval.addEventListener("input", () => {
+  sim.caInterval = Math.max(1, Number(caInterval.value) | 0);
+});
+golRate.addEventListener("input", syncRangeReadouts);
+golRate.addEventListener("input", () => {
+  sim.golInterval = Math.max(1, Number(golRate.value) | 0);
+});
+simRate.addEventListener("input", () => {
+  lastUserRateChangeNow = performance.now();
+});
+syncRangeReadouts();
 
 function nominalFps() {
   return clamp(fps, 10, 240);
