@@ -67,7 +67,9 @@ const clearBtn = /** @type {HTMLButtonElement} */ (document.getElementById("clea
 const levelSelect = /** @type {HTMLSelectElement} */ (document.getElementById("levelSelect"));
 const particleSelect = /** @type {HTMLSelectElement} */ (document.getElementById("particleSelect"));
 const brushSize = /** @type {HTMLInputElement} */ (document.getElementById("brushSize"));
-const stepsPerFrame = /** @type {HTMLInputElement} */ (document.getElementById("stepsPerFrame"));
+const rateMode = /** @type {HTMLSelectElement} */ (document.getElementById("rateMode"));
+const simRateLabel = /** @type {HTMLSpanElement} */ (document.getElementById("simRateLabel"));
+const simRate = /** @type {HTMLInputElement} */ (document.getElementById("simRate"));
 const zoomInput = /** @type {HTMLInputElement} */ (document.getElementById("zoom"));
 const viewSelect = /** @type {HTMLSelectElement} */ (document.getElementById("viewSelect"));
 const resSelect = /** @type {HTMLSelectElement} */ (document.getElementById("resSelect"));
@@ -83,7 +85,7 @@ const levelHintEl = /** @type {HTMLElement} */ (document.getElementById("levelHi
 const settingsBtn = /** @type {HTMLButtonElement} */ (document.getElementById("settingsBtn"));
 const settingsPanel = /** @type {HTMLDivElement} */ (document.getElementById("settingsPanel"));
 const brushSizeValue = /** @type {HTMLOutputElement | null} */ (document.getElementById("brushSizeValue"));
-const stepsPerFrameValue = /** @type {HTMLOutputElement | null} */ (document.getElementById("stepsPerFrameValue"));
+const simRateValue = /** @type {HTMLOutputElement | null} */ (document.getElementById("simRateValue"));
 const zoomValue = /** @type {HTMLOutputElement | null} */ (document.getElementById("zoomValue"));
 const topbar = /** @type {HTMLElement | null} */ (document.querySelector("header.topbar"));
 
@@ -543,6 +545,10 @@ let simStepAcc = 0;
 /** @type {null | {startNow: number, holdMs: number, durationMs: number}} */
 let startupStepRamp = null;
 
+const MAX_STEPS_PER_FRAME = 8;
+const MIN_STEPS_PER_SECOND = 0;
+const MAX_STEPS_PER_SECOND = 1000;
+
 function cancelStartupStepRamp() {
   startupStepRamp = null;
 }
@@ -618,19 +624,70 @@ window.addEventListener(
   { capture: true },
 );
 
-function syncRangeReadouts() {
-  if (brushSizeValue) brushSizeValue.textContent = brushSize.value;
-  if (stepsPerFrameValue) stepsPerFrameValue.textContent = stepsPerFrame.value;
-  if (zoomValue) zoomValue.textContent = `${Number(camera.zoom).toFixed(1)}×`;
-}
-
-brushSize.addEventListener("input", syncRangeReadouts);
-stepsPerFrame.addEventListener("input", syncRangeReadouts);
-syncRangeReadouts();
-
 let lastNow = performance.now();
 let fps = 60;
 let lastStatusNow = 0;
+
+function syncRangeReadouts() {
+  if (brushSizeValue) brushSizeValue.textContent = brushSize.value;
+  if (zoomValue) zoomValue.textContent = `${Number(camera.zoom).toFixed(1)}×`;
+  syncSimRateReadout();
+}
+
+brushSize.addEventListener("input", syncRangeReadouts);
+simRate.addEventListener("input", syncRangeReadouts);
+syncRangeReadouts();
+
+function nominalFps() {
+  return clamp(fps, 10, 240);
+}
+
+function syncSimRateReadout() {
+  if (!simRateValue) return;
+  const m = /** @type {'sps'|'spf'} */ (rateMode.value);
+  const nf = nominalFps();
+  if (m === "sps") {
+    const sps = clamp(Number(simRate.value) || 0, MIN_STEPS_PER_SECOND, MAX_STEPS_PER_SECOND);
+    const approxSpf = clamp(sps / Math.max(1, nf), 0, MAX_STEPS_PER_FRAME);
+    simRateValue.textContent = `${Math.round(sps)}/s (~${approxSpf.toFixed(1)}/f)`;
+  } else {
+    const spf = clampInt(Number(simRate.value) || 0, 0, MAX_STEPS_PER_FRAME);
+    const approxSps = spf * nf;
+    simRateValue.textContent = `${spf}/f (~${Math.round(approxSps)}/s)`;
+  }
+}
+
+function syncRateUi() {
+  const m = /** @type {'sps'|'spf'} */ (rateMode.value);
+  if (m === "sps") {
+    simRateLabel.textContent = "Steps/sec";
+    simRate.min = String(MIN_STEPS_PER_SECOND);
+    simRate.max = String(MAX_STEPS_PER_SECOND);
+    simRate.step = "1";
+  } else {
+    simRateLabel.textContent = "Steps/frame";
+    simRate.min = "0";
+    simRate.max = String(MAX_STEPS_PER_FRAME);
+    simRate.step = "1";
+  }
+  syncSimRateReadout();
+}
+
+rateMode.addEventListener("change", () => {
+  cancelStartupStepRamp();
+  const nf = nominalFps();
+  const m = /** @type {'sps'|'spf'} */ (rateMode.value);
+  if (m === "spf") {
+    const sps = clamp(Number(simRate.value) || 0, MIN_STEPS_PER_SECOND, MAX_STEPS_PER_SECOND);
+    simRate.value = String(clampInt(Math.round(sps / Math.max(1, nf)), 0, MAX_STEPS_PER_FRAME));
+  } else {
+    const spf = clampInt(Number(simRate.value) || 0, 0, MAX_STEPS_PER_FRAME);
+    simRate.value = String(clampInt(Math.round(spf * nf), MIN_STEPS_PER_SECOND, MAX_STEPS_PER_SECOND));
+  }
+  syncRateUi();
+});
+
+syncRateUi();
 
 /**
  * @param {number} v
@@ -1113,9 +1170,6 @@ function loop(now) {
     brush.lastY = y1;
   }
 
-  const spf = Number(stepsPerFrame.value) | 0;
-  const nominalFps = clamp(fps, 10, 240);
-  const targetSps = spf * nominalFps;
   const dtSeconds = dtMs / 1000;
 
   if (keyPan.left || keyPan.right || keyPan.up || keyPan.down) {
@@ -1133,27 +1187,47 @@ function loop(now) {
     }
   }
 
-  let currentSps = 0;
-  if (startupStepRamp) {
-    const t = clamp((now - startupStepRamp.startNow - startupStepRamp.holdMs) / Math.max(1, startupStepRamp.durationMs), 0, 1);
-    currentSps = targetSps * t;
-    if (t >= 1) {
-      startupStepRamp = null;
-      running = true;
-      playPauseBtn.textContent = "Pause";
+  const mode = /** @type {'sps'|'spf'} */ (rateMode.value);
+
+  if (mode === "sps") {
+    const targetSps = clamp(Number(simRate.value) || 0, MIN_STEPS_PER_SECOND, MAX_STEPS_PER_SECOND);
+    let currentSps = 0;
+    if (startupStepRamp) {
+      const t = clamp((now - startupStepRamp.startNow - startupStepRamp.holdMs) / Math.max(1, startupStepRamp.durationMs), 0, 1);
+      currentSps = targetSps * t;
+      if (t >= 1) {
+        startupStepRamp = null;
+        running = true;
+        playPauseBtn.textContent = "Pause";
+      }
+    } else if (running) {
+      currentSps = targetSps;
+    } else if (stepOnce) {
+      simStepAcc += 1;
+      stepOnce = false;
     }
-  } else if (running) {
-    currentSps = targetSps;
-  } else if (stepOnce) {
-    simStepAcc += 1;
-    stepOnce = false;
+    simStepAcc += currentSps * dtSeconds;
+  } else {
+    const targetSpf = clampInt(Number(simRate.value) || 0, 0, MAX_STEPS_PER_FRAME);
+    if (startupStepRamp) {
+      const t = clamp((now - startupStepRamp.startNow - startupStepRamp.holdMs) / Math.max(1, startupStepRamp.durationMs), 0, 1);
+      simStepAcc += targetSpf * t;
+      if (t >= 1) {
+        startupStepRamp = null;
+        running = true;
+        playPauseBtn.textContent = "Pause";
+      }
+    } else if (running) {
+      simStepAcc += targetSpf;
+    } else if (stepOnce) {
+      simStepAcc += 1;
+      stepOnce = false;
+    }
   }
 
-  simStepAcc += currentSps * dtSeconds;
-
   const rawSteps = simStepAcc | 0;
-  const steps = clampInt(rawSteps, 0, 8);
-  if (rawSteps > 8) simStepAcc = 0;
+  const steps = clampInt(rawSteps, 0, MAX_STEPS_PER_FRAME);
+  if (rawSteps > MAX_STEPS_PER_FRAME) simStepAcc = 0;
   else simStepAcc -= steps;
   for (let i = 0; i < steps; i++) sim.step();
 
@@ -1178,6 +1252,7 @@ function loop(now) {
   if (dtMs > 0 && dtMs <= 250) fps = fps * 0.9 + (1000 / Math.max(1, dtMs)) * 0.1;
   if (now - lastStatusNow > 180) {
     lastStatusNow = now;
+    syncSimRateReadout();
     const lvl = activeLevel.id === LEVEL_ID.SANDBOX ? "" : ` • ${activeLevel.name}`;
     const budget = remainingBudget === null ? "" : ` • stone ${remainingBudget}`;
     const done = levelComplete ? " • complete" : "";

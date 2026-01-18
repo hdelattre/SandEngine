@@ -42,10 +42,17 @@
             <input id="brushSize" type="range" min="1" max="30" value="8" />
             <output class="control__value" id="brushSizeValue">8</output>
           </label>
+          <label class="control control--select">
+            <span>Rate</span>
+            <select id="rateMode">
+              <option value="sps" selected>Per second</option>
+              <option value="spf">Per frame</option>
+            </select>
+          </label>
           <label class="control control--range">
-            <span>Steps/frame</span>
-            <input id="stepsPerFrame" type="range" min="1" max="6" value="1" />
-            <output class="control__value" id="stepsPerFrameValue">1</output>
+            <span id="simRateLabel">Steps/sec</span>
+            <input id="simRate" type="range" min="0" max="1000" step="1" value="60" />
+            <output class="control__value" id="simRateValue">60/s (~1.0/f)</output>
           </label>
           <label class="control control--range">
             <span>Zoom</span>
