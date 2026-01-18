@@ -1044,6 +1044,13 @@ window.addEventListener("keydown", (e) => {
 });
 
 function loop(now) {
+  let dtMs = now - lastNow;
+  if (dtMs > 1000) {
+    if (startupStepRamp) startupStepRamp.startNow += dtMs;
+    dtMs = 0;
+  }
+  lastNow = now;
+
   sim.resizeCanvasToDisplaySize();
   resizeCanvasToDisplaySize(cursorCanvas);
 
@@ -1059,23 +1066,32 @@ function loop(now) {
   }
 
   const spf = Number(stepsPerFrame.value) | 0;
+  const nominalFps = clamp(fps, 10, 240);
+  const targetSps = spf * nominalFps;
+  const dtSeconds = dtMs / 1000;
+
+  let currentSps = 0;
   if (startupStepRamp) {
     const t = clamp((now - startupStepRamp.startNow - startupStepRamp.holdMs) / Math.max(1, startupStepRamp.durationMs), 0, 1);
-    simStepAcc += spf * t;
+    currentSps = targetSps * t;
     if (t >= 1) {
       startupStepRamp = null;
       running = true;
       playPauseBtn.textContent = "Pause";
     }
   } else if (running) {
-    simStepAcc += spf;
+    currentSps = targetSps;
   } else if (stepOnce) {
     simStepAcc += 1;
     stepOnce = false;
   }
 
-  const steps = simStepAcc | 0;
-  simStepAcc -= steps;
+  simStepAcc += currentSps * dtSeconds;
+
+  const rawSteps = simStepAcc | 0;
+  const steps = clampInt(rawSteps, 0, 8);
+  if (rawSteps > 8) simStepAcc = 0;
+  else simStepAcc -= steps;
   for (let i = 0; i < steps; i++) sim.step();
 
   if (activeLevel.goal && !levelComplete && now - lastGoalCheckNow > 250) {
@@ -1096,9 +1112,7 @@ function loop(now) {
   sim.render();
   drawBrushCursor();
 
-  const dt = now - lastNow;
-  lastNow = now;
-  fps = fps * 0.9 + (1000 / Math.max(1, dt)) * 0.1;
+  if (dtMs > 0 && dtMs <= 250) fps = fps * 0.9 + (1000 / Math.max(1, dtMs)) * 0.1;
   if (now - lastStatusNow > 180) {
     lastStatusNow = now;
     const lvl = activeLevel.id === LEVEL_ID.SANDBOX ? "" : ` • ${activeLevel.name}`;
