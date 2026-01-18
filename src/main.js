@@ -936,6 +936,11 @@ window.addEventListener(
 let lastNow = performance.now();
 let fps = 60;
 let lastStatusNow = 0;
+let simEffectiveSpsEma = 0;
+let simTargetSpsForUi = 0;
+let simSlow = false;
+let lastUserRateChangeNow = performance.now();
+let lastAutoTuneNow = 0;
 
 function syncRangeReadouts() {
   if (brushSizeValue) brushSizeValue.textContent = brushSize.value;
@@ -945,6 +950,9 @@ function syncRangeReadouts() {
 
 brushSize.addEventListener("input", syncRangeReadouts);
 simRate.addEventListener("input", syncRangeReadouts);
+simRate.addEventListener("input", () => {
+  lastUserRateChangeNow = performance.now();
+});
 syncRangeReadouts();
 
 function nominalFps() {
@@ -984,6 +992,7 @@ function syncRateUi() {
 
 rateMode.addEventListener("change", () => {
   cancelStartupStepRamp();
+  lastUserRateChangeNow = performance.now();
   const nf = nominalFps();
   const m = /** @type {'sps'|'spf'} */ (rateMode.value);
   if (m === "spf") {
@@ -1586,9 +1595,15 @@ function loop(now) {
   }
 
   const mode = /** @type {'sps'|'spf'} */ (rateMode.value);
+  simSlow = false;
+  simTargetSpsForUi = 0;
+
+  /** @type {number} */
+  let targetSpsForFrame = 0;
 
   if (mode === "sps") {
     const targetSps = clamp(Number(simRate.value) || 0, MIN_STEPS_PER_SECOND, MAX_STEPS_PER_SECOND);
+    targetSpsForFrame = targetSps;
     let currentSps = 0;
     if (startupStepRamp) {
       const t = clamp((now - startupStepRamp.startNow - startupStepRamp.holdMs) / Math.max(1, startupStepRamp.durationMs), 0, 1);
@@ -1607,6 +1622,7 @@ function loop(now) {
     simStepAcc += currentSps * dtSeconds;
   } else {
     const targetSpf = clampInt(Number(simRate.value) || 0, 0, MAX_STEPS_PER_FRAME);
+    targetSpsForFrame = 0;
     if (startupStepRamp) {
       const t = clamp((now - startupStepRamp.startNow - startupStepRamp.holdMs) / Math.max(1, startupStepRamp.durationMs), 0, 1);
       simStepAcc += targetSpf * t;
@@ -1625,9 +1641,38 @@ function loop(now) {
 
   const rawSteps = simStepAcc | 0;
   const steps = clampInt(rawSteps, 0, MAX_STEPS_PER_FRAME);
-  if (rawSteps > MAX_STEPS_PER_FRAME) simStepAcc = 0;
+  const overflowed = rawSteps > MAX_STEPS_PER_FRAME;
+  if (overflowed) simStepAcc = 0;
   else simStepAcc -= steps;
   for (let i = 0; i < steps; i++) sim.step();
+
+  if (dtSeconds > 0) {
+    const effSps = steps / dtSeconds;
+    simEffectiveSpsEma = simEffectiveSpsEma * 0.9 + effSps * 0.1;
+  }
+
+  if (mode === "sps") {
+    simTargetSpsForUi = targetSpsForFrame;
+    const target = targetSpsForFrame;
+    const eff = simEffectiveSpsEma;
+    const gpuBound = running && !startupStepRamp && target > 0 && (overflowed || (steps === MAX_STEPS_PER_FRAME && eff + 5 < target));
+    simSlow = gpuBound && eff < target * 0.92;
+
+    const userRecentlyChanged = now - lastUserRateChangeNow < 2000;
+    const canAutoTune = running && !startupStepRamp && !userRecentlyChanged;
+    if (canAutoTune && gpuBound && now - lastAutoTuneNow > 650) {
+      // Reduce requested SPS toward the observed throughput (only decreases).
+      const suggested = clamp(Math.floor((eff * 0.92) / 10) * 10, MIN_STEPS_PER_SECOND, MAX_STEPS_PER_SECOND);
+      const current = clamp(Number(simRate.value) || 0, MIN_STEPS_PER_SECOND, MAX_STEPS_PER_SECOND);
+      if (suggested >= MIN_STEPS_PER_SECOND && suggested < current) {
+        simRate.value = String(suggested);
+        syncRangeReadouts();
+        lastAutoTuneNow = now;
+      }
+    }
+  } else {
+    simTargetSpsForUi = 0;
+  }
 
   if (activeLevel.goal && !levelComplete && now - lastGoalCheckNow > 250) {
     lastGoalCheckNow = now;
@@ -1654,7 +1699,17 @@ function loop(now) {
     const lvl = activeLevel.id === LEVEL_ID.SANDBOX ? "" : ` • ${activeLevel.name}`;
     const budget = remainingBudget === null ? "" : ` • stone ${remainingBudget}`;
     const done = levelComplete ? " • complete" : "";
-    const statusText = `${sim.width}×${sim.height}${lvl}${budget}${done} • tick ${sim.tick} • ${fps.toFixed(0)} fps`;
+    const simRateText =
+      mode === "sps" && simTargetSpsForUi > 0
+        ? (() => {
+            const target = Math.round(simTargetSpsForUi);
+            const eff = Math.round(simEffectiveSpsEma);
+            const tol = Math.max(2, Math.round(target * 0.06));
+            const match = Math.abs(eff - target) <= tol && !simSlow;
+            return match ? ` • sim ${target} sps` : ` • sim ${eff}/${target} sps${simSlow ? " slow" : ""}`;
+          })()
+        : "";
+    const statusText = `${sim.width}×${sim.height}${lvl}${budget}${done}${simRateText} • tick ${sim.tick} • ${fps.toFixed(0)} fps`;
     setText(statusEl, statusText);
     statusEl.title = statusText;
   }
