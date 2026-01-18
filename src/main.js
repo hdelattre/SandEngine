@@ -103,11 +103,14 @@ const stampH = /** @type {HTMLInputElement} */ (document.getElementById("stampH"
 const stampLock = /** @type {HTMLInputElement} */ (document.getElementById("stampLock"));
 const addMode = /** @type {HTMLInputElement} */ (document.getElementById("addMode"));
 const golMode = /** @type {HTMLInputElement} */ (document.getElementById("golMode"));
+const golRateControl = /** @type {HTMLElement} */ (document.getElementById("golRateControl"));
+const golRate = /** @type {HTMLInputElement} */ (document.getElementById("golRate"));
 const levelHintEl = /** @type {HTMLElement} */ (document.getElementById("levelHint"));
 const settingsBtn = /** @type {HTMLButtonElement} */ (document.getElementById("settingsBtn"));
 const settingsPanel = /** @type {HTMLDivElement} */ (document.getElementById("settingsPanel"));
 const brushSizeValue = /** @type {HTMLOutputElement | null} */ (document.getElementById("brushSizeValue"));
 const simRateValue = /** @type {HTMLOutputElement | null} */ (document.getElementById("simRateValue"));
+const golRateValue = /** @type {HTMLOutputElement | null} */ (document.getElementById("golRateValue"));
 const zoomValue = /** @type {HTMLOutputElement | null} */ (document.getElementById("zoomValue"));
 const topbar = /** @type {HTMLElement | null} */ (document.querySelector("header.topbar"));
 
@@ -954,24 +957,31 @@ clearBtn.addEventListener("click", () => {
   else sim.clear();
 });
 
-viewSelect.addEventListener("change", () => {
-  sim.setViewMode(/** @type {ViewMode} */ (viewSelect.value));
-});
+	viewSelect.addEventListener("change", () => {
+	  sim.setViewMode(/** @type {ViewMode} */ (viewSelect.value));
+	});
 
-golMode.checked = sim.golEnabled;
-golMode.addEventListener("change", async () => {
-  const want = golMode.checked;
-  golMode.disabled = true;
-  try {
-    await sim.setGolEnabled(want);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    notify(`life failed: ${msg}`);
-  } finally {
-    golMode.checked = sim.golEnabled;
-    golMode.disabled = false;
-  }
-});
+	sim.golInterval = Math.max(1, Number(golRate.value) | 0);
+	golRate.value = String(sim.golInterval);
+	golRateControl.hidden = false;
+	golRate.disabled = false;
+	golMode.checked = sim.golEnabled;
+	golMode.addEventListener("change", async () => {
+	  const want = golMode.checked;
+	  golMode.disabled = true;
+	  golRate.disabled = true;
+	  try {
+	    await sim.setGolEnabled(want);
+	  } catch (err) {
+	    const msg = err instanceof Error ? err.message : String(err);
+	    notify(`life failed: ${msg}`);
+	  } finally {
+	    golMode.checked = sim.golEnabled;
+	    golRateControl.hidden = false;
+	    golRate.disabled = false;
+	    golMode.disabled = false;
+	  }
+	});
 
 resSelect.addEventListener("change", () => {
   if (activeLevel.id !== LEVEL_ID.SANDBOX) return;
@@ -1024,21 +1034,32 @@ let lastStatusNow = 0;
 let simEffectiveSpsEma = 0;
 let simTargetSpsForUi = 0;
 let simSlow = false;
-let lastUserRateChangeNow = performance.now();
-let lastAutoTuneNow = 0;
+	let lastUserRateChangeNow = performance.now();
+	let lastAutoTuneNow = 0;
 
-function syncRangeReadouts() {
-  if (brushSizeValue) brushSizeValue.textContent = brushSize.value;
-  if (zoomValue) zoomValue.textContent = `${Number(camera.zoom).toFixed(1)}×`;
-  syncSimRateReadout();
-}
+	function syncGolRateReadout() {
+	  if (!golRateValue) return;
+	  const n = Math.max(1, Number(golRate.value) | 0);
+	  golRateValue.textContent = n === 1 ? "every tick" : `every ${n} ticks`;
+	}
 
-brushSize.addEventListener("input", syncRangeReadouts);
-simRate.addEventListener("input", syncRangeReadouts);
-simRate.addEventListener("input", () => {
-  lastUserRateChangeNow = performance.now();
-});
-syncRangeReadouts();
+	function syncRangeReadouts() {
+	  if (brushSizeValue) brushSizeValue.textContent = brushSize.value;
+	  if (zoomValue) zoomValue.textContent = `${Number(camera.zoom).toFixed(1)}×`;
+	  syncGolRateReadout();
+	  syncSimRateReadout();
+	}
+
+	brushSize.addEventListener("input", syncRangeReadouts);
+	simRate.addEventListener("input", syncRangeReadouts);
+	golRate.addEventListener("input", syncRangeReadouts);
+	golRate.addEventListener("input", () => {
+	  sim.golInterval = Math.max(1, Number(golRate.value) | 0);
+	});
+	simRate.addEventListener("input", () => {
+	  lastUserRateChangeNow = performance.now();
+	});
+	syncRangeReadouts();
 
 function nominalFps() {
   return clamp(fps, 10, 240);

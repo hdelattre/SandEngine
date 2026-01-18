@@ -50,6 +50,7 @@ export class GpuSim {
     this.camCenterY = 0.5;
     this.camZoom = 1.0;
     this.golEnabled = false;
+    this.golInterval = 1;
     /** @type {null | {program: WebGLProgram, u: Record<string, WebGLUniformLocation>}} */
     this._gol = null;
     /** @type {Promise<void> | null} */
@@ -558,7 +559,10 @@ export class GpuSim {
     this._matterPass(horiz[0], horiz[1], 0, 0, 1, 32);
     this._matterPass(horiz[0], horiz[1], 1, 0, 1, 33);
 
-    if (this.golEnabled && this._gol) this._golPass();
+    if (this.golEnabled && this._gol) {
+      const interval = Math.max(1, this.golInterval | 0);
+      if (((this.tick >>> 0) % interval) === 0) this._golPass();
+    }
 
     this.tick++;
   }

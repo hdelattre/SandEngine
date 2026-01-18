@@ -81,10 +81,6 @@
             <span>Add</span>
             <input id="addMode" class="toggle" type="checkbox" />
           </label>
-          <label class="control control--toggle" title="Run a Game of Life pass every tick">
-            <span>Game of Life</span>
-            <input id="golMode" class="toggle" type="checkbox" aria-label="Game of Life" />
-          </label>
           <label class="control control--select">
             <span>Rate</span>
             <select id="rateMode">
@@ -112,6 +108,15 @@
           <label class="control control--select">
             <span>Res</span>
             <select id="resSelect"></select>
+          </label>
+          <label id="golRateControl" class="control control--range" title="How often to apply the Game of Life pass">
+            <span>GoL interval</span>
+            <input id="golRate" type="range" min="1" max="32" step="1" value="1" />
+            <output class="control__value" id="golRateValue">every tick</output>
+          </label>
+          <label class="control control--toggle" title="Run a Game of Life pass every tick">
+            <span>Game of Life</span>
+            <input id="golMode" class="toggle" type="checkbox" aria-label="Game of Life" />
           </label>
         </div>
         <div class="panelHints" aria-label="Hints">
