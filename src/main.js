@@ -423,7 +423,8 @@ function setParticlePickerOpen(open) {
   particlePicker.hidden = !open;
   if (open) {
     particleSearch.value = "";
-    particleSearch.focus();
+    const isCoarse = window.matchMedia("(pointer: coarse)").matches;
+    if (!isCoarse) particleSearch.focus();
     syncParticleGrid();
   }
 }
