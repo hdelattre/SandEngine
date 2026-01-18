@@ -147,6 +147,8 @@ const camera = { centerX: 0.5, centerY: 0.5, zoom: 1.0 };
 const pan = { down: false, pointerId: -1, startX: 0, startY: 0, startCenterX: 0.5, startCenterY: 0.5 };
 /** @type {{has: boolean, clientX: number, clientY: number}} */
 const pointerScreen = { has: false, clientX: 0, clientY: 0 };
+const keyPan = { left: false, right: false, up: false, down: false };
+let keyShiftDown = false;
 
 /** @type {Map<number, {x: number, y: number}>} */
 const touchPoints = new Map();
@@ -964,14 +966,26 @@ window.addEventListener("keydown", (e) => {
   // otherwise trigger the "v" particle hotkey).
   if (e.metaKey || e.ctrlKey) return;
 
-  if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "ArrowDown") {
+  if (e.key === "Shift") keyShiftDown = true;
+
+  if (e.key === "ArrowLeft") {
     e.preventDefault();
-    const step = (e.shiftKey ? 0.2 : 0.08) / camera.zoom;
-    if (e.key === "ArrowLeft") camera.centerX -= step;
-    else if (e.key === "ArrowRight") camera.centerX += step;
-    else if (e.key === "ArrowUp") camera.centerY += step;
-    else camera.centerY -= step;
-    clampCamera();
+    keyPan.left = true;
+    return;
+  }
+  if (e.key === "ArrowRight") {
+    e.preventDefault();
+    keyPan.right = true;
+    return;
+  }
+  if (e.key === "ArrowUp") {
+    e.preventDefault();
+    keyPan.up = true;
+    return;
+  }
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    keyPan.down = true;
     return;
   }
 
@@ -1043,6 +1057,22 @@ window.addEventListener("keydown", (e) => {
   }
 });
 
+window.addEventListener("keyup", (e) => {
+  if (e.key === "Shift") keyShiftDown = false;
+  else if (e.key === "ArrowLeft") keyPan.left = false;
+  else if (e.key === "ArrowRight") keyPan.right = false;
+  else if (e.key === "ArrowUp") keyPan.up = false;
+  else if (e.key === "ArrowDown") keyPan.down = false;
+});
+
+window.addEventListener("blur", () => {
+  keyPan.left = false;
+  keyPan.right = false;
+  keyPan.up = false;
+  keyPan.down = false;
+  keyShiftDown = false;
+});
+
 function loop(now) {
   let dtMs = now - lastNow;
   if (dtMs > 1000) {
@@ -1069,6 +1099,21 @@ function loop(now) {
   const nominalFps = clamp(fps, 10, 240);
   const targetSps = spf * nominalFps;
   const dtSeconds = dtMs / 1000;
+
+  if (keyPan.left || keyPan.right || keyPan.up || keyPan.down) {
+    let dx = (keyPan.right ? 1 : 0) - (keyPan.left ? 1 : 0);
+    let dy = (keyPan.up ? 1 : 0) - (keyPan.down ? 1 : 0);
+    const len = Math.hypot(dx, dy);
+    if (len > 0) {
+      dx /= len;
+      dy /= len;
+      const speed = keyShiftDown ? 1.2 : 0.45; // screens per second
+      const k = (speed * dtSeconds) / camera.zoom;
+      camera.centerX += dx * k;
+      camera.centerY += dy * k;
+      clampCamera();
+    }
+  }
 
   let currentSps = 0;
   if (startupStepRamp) {
