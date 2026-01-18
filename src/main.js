@@ -177,7 +177,7 @@ void boot();
 
 function startApp() {
   if (!sim) return;
-  let didAutoPoster = false;
+  let didAutoStartupStamp = false;
 
   /** @type {(typeof levels)[number]} */
   let activeLevel = levels.find((l) => l.id === levelSelect.value) ?? levels[0];
@@ -762,7 +762,7 @@ function setActiveLevel(levelId) {
     else sim.clear();
     if (stamp) setStampSize(stamp.w, stamp.h);
     clampCamera();
-    void autoStampPosterOnce();
+    void autoStampStartupOnce();
     return;
   }
 
@@ -851,11 +851,90 @@ async function decodeImageBlob(blob) {
   }
 }
 
-async function autoStampPosterOnce() {
-  if (didAutoPoster) return;
-  didAutoPoster = true;
+function startupImageUrlFromQuery() {
+  const sp = new URLSearchParams(window.location.search);
+  const raw = sp.get("img") || sp.get("image");
+  if (!raw) return null;
+  const s = raw.trim();
+  try {
+    const normalized =
+      s.startsWith("http://") || s.startsWith("https://")
+        ? s
+        : s.startsWith("//")
+          ? `https:${s}`
+          : /^[a-z0-9.-]+\.[a-z]{2,}(?::\d+)?\//i.test(s)
+            ? `https://${s}`
+            : s;
+
+    const u = new URL(normalized, window.location.href);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    return u.toString();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * @param {Blob} blob
+ */
+async function stampWorldFromBlob(blob) {
   if (!sim) return;
   if (activeLevel.id !== LEVEL_ID.SANDBOX) return;
+  const { source, width: srcW, height: srcH, cleanup } = await decodeImageBlob(blob);
+
+  const w = Math.max(1, sim.width - 2);
+  const h = Math.max(1, sim.height - 1);
+  const offscreen = rasterizeToOffscreen(source, srcW, srcH, w, h);
+  if (cleanup) cleanup();
+
+  // @ts-ignore - OffscreenCanvas is a valid CanvasImageSource at runtime.
+  sim.stampImage(offscreen, w, h, 1, 1, { edgeStone: pasteEdgeStone.checked, addMode: false });
+  startStartupStepRamp();
+}
+
+/**
+ * @param {string} url
+ * @returns {Promise<boolean>}
+ */
+async function tryStampWorldFromUrl(url) {
+  if (!sim) return false;
+  if (activeLevel.id !== LEVEL_ID.SANDBOX) return false;
+  try {
+    const r = await fetch(url, { mode: "cors" });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const ct = (r.headers.get("content-type") || "").toLowerCase().trim();
+    if (ct && !ct.startsWith("image/")) throw new Error(`not an image (content-type: ${ct})`);
+    if (!ct) {
+      const u = new URL(url);
+      const p = u.pathname.toLowerCase();
+      const okExt =
+        p.endsWith(".png") ||
+        p.endsWith(".jpg") ||
+        p.endsWith(".jpeg") ||
+        p.endsWith(".webp") ||
+        p.endsWith(".gif") ||
+        p.endsWith(".bmp") ||
+        p.endsWith(".avif");
+      if (!okExt) throw new Error("not an image url");
+    }
+    await stampWorldFromBlob(await r.blob());
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
+async function autoStampStartupOnce() {
+  if (didAutoStartupStamp) return;
+  didAutoStartupStamp = true;
+  if (!sim) return;
+  if (activeLevel.id !== LEVEL_ID.SANDBOX) return;
+
+  const url = startupImageUrlFromQuery();
+  if (url) {
+    const ok = await tryStampWorldFromUrl(url);
+    if (ok) return;
+  }
 
   const urls = ["./assets/poster.jpg", "./assets/poster.png"];
   let res = null;
@@ -873,19 +952,7 @@ async function autoStampPosterOnce() {
   if (!res) return;
 
   try {
-    const blob = await res.blob();
-    const { source, width: srcW, height: srcH, cleanup } = await decodeImageBlob(blob);
-
-    const w = Math.max(1, sim.width - 2);
-    const h = Math.max(1, sim.height - 1);
-    const offscreen = rasterizeToOffscreen(source, srcW, srcH, w, h);
-
-    if (cleanup) cleanup();
-
-    // @ts-ignore - OffscreenCanvas is a valid CanvasImageSource at runtime.
-    sim.stampImage(offscreen, w, h, 1, 1, { edgeStone: pasteEdgeStone.checked, addMode: false });
-
-    startStartupStepRamp();
+    await stampWorldFromBlob(await res.blob());
   } catch {
     // silent: poster is optional
   }
