@@ -311,7 +311,7 @@ export function defaultCellForParticle(id) {
       return { temp: DEFAULT_AMBIENT_TEMP, data: 255, flags: 0 };
     case Particle.BOT:
       // `flags` is per-cell metadata in state.a; for Bot it encodes:
-      // bits 0..1 dir (0=right,1=up,2=left,3=down), bit2 role (reserved),
+      // bits 0..1 dir (0=right,1=up,2=left,3=down), bit2 drill mode,
       // bit3 lastMoveTickParity, bit4 hand (turn preference), bits5..6 cooldown.
       // bit7 is a version marker and should be 1.
       // `data` (state.b) is the agent's paint target particle id (0 means paint Air/Empty).
