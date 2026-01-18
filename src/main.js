@@ -518,12 +518,30 @@ canvas.addEventListener(
 let running = true;
 let stepOnce = false;
 
+// Allows fractional "steps per frame" by accumulating budget over frames.
+let simStepAcc = 0;
+
+/** @type {null | {startNow: number, holdMs: number, durationMs: number}} */
+let startupStepRamp = null;
+
+function cancelStartupStepRamp() {
+  startupStepRamp = null;
+}
+
+function startStartupStepRamp() {
+  startupStepRamp = { startNow: performance.now(), holdMs: 500, durationMs: 3000 };
+  running = false;
+  playPauseBtn.textContent = "Play";
+}
+
 playPauseBtn.addEventListener("click", () => {
+  cancelStartupStepRamp();
   running = !running;
   playPauseBtn.textContent = running ? "Pause" : "Play";
 });
 
 stepBtn.addEventListener("click", () => {
+  cancelStartupStepRamp();
   stepOnce = true;
 });
 
@@ -756,6 +774,7 @@ async function autoStampPosterOnce() {
 
     // @ts-ignore - OffscreenCanvas is a valid CanvasImageSource at runtime.
     sim.stampImage(offscreen, w, h, 1, 1, { edgeStone: pasteEdgeStone.checked, addMode: false });
+    startStartupStepRamp();
   } catch {
     // silent: poster is optional
   }
@@ -971,6 +990,7 @@ window.addEventListener("keydown", (e) => {
 
   if (e.code === "Space") {
     e.preventDefault();
+    cancelStartupStepRamp();
     running = !running;
     playPauseBtn.textContent = running ? "Pause" : "Play";
     return;
@@ -1039,12 +1059,24 @@ function loop(now) {
   }
 
   const spf = Number(stepsPerFrame.value) | 0;
-  if (running) {
-    for (let i = 0; i < spf; i++) sim.step();
+  if (startupStepRamp) {
+    const t = clamp((now - startupStepRamp.startNow - startupStepRamp.holdMs) / Math.max(1, startupStepRamp.durationMs), 0, 1);
+    simStepAcc += spf * t;
+    if (t >= 1) {
+      startupStepRamp = null;
+      running = true;
+      playPauseBtn.textContent = "Pause";
+    }
+  } else if (running) {
+    simStepAcc += spf;
   } else if (stepOnce) {
-    sim.step();
+    simStepAcc += 1;
     stepOnce = false;
   }
+
+  const steps = simStepAcc | 0;
+  simStepAcc -= steps;
+  for (let i = 0; i < steps; i++) sim.step();
 
   if (activeLevel.goal && !levelComplete && now - lastGoalCheckNow > 250) {
     lastGoalCheckNow = now;
