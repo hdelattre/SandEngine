@@ -137,30 +137,50 @@ levelHintEl.textContent = "";
 
 /** @type {GpuSim | null} */
 let sim = null;
-let didAutoPoster = false;
 
-setText(hintStatusEl, "Initializing GPU…");
-setLoading(true, "Compiling shaders…");
-
-try {
-  const { width, height } = parseRes(resSelect.value);
-  sim = new GpuSim(canvas, particleDefs, paletteTexels, propTexels, thermal0Texels, thermal1Texels, latentTexels, {
-    width,
-    height,
-    seed: (Math.random() * 2 ** 32) >>> 0,
-  });
-  setText(hintStatusEl, "WebGL2 ✓");
-} catch (err) {
-  const msg = err instanceof Error ? err.message : String(err);
-  setText(statusEl, `Error: ${msg}`);
-  setText(hintStatusEl, "WebGL2 required");
-  showFatalError("WebGL2 required", msg);
+/**
+ * Let the browser paint (e.g. show a loading overlay) before starting expensive
+ * WebGL compilation on cold startup.
+ * @returns {Promise<void>}
+ */
+function nextFrame() {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }
 
-if (!sim) throw new Error("WebGL2 required");
+async function boot() {
+  setText(hintStatusEl, "Initializing GPU…");
+  setLoading(true, "Compiling shaders…");
+  await nextFrame();
 
-/** @type {(typeof levels)[number]} */
-let activeLevel = levels.find((l) => l.id === levelSelect.value) ?? levels[0];
+  try {
+    const { width, height } = parseRes(resSelect.value);
+    sim = new GpuSim(canvas, particleDefs, paletteTexels, propTexels, thermal0Texels, thermal1Texels, latentTexels, {
+      width,
+      height,
+      seed: (Math.random() * 2 ** 32) >>> 0,
+    });
+    setText(hintStatusEl, "WebGL2 ✓");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    setText(statusEl, `Error: ${msg}`);
+    setText(hintStatusEl, "WebGL2 required");
+    showFatalError("WebGL2 required", msg);
+    return;
+  } finally {
+    setLoading(false);
+  }
+
+  startApp();
+}
+
+void boot();
+
+function startApp() {
+  if (!sim) return;
+  let didAutoPoster = false;
+
+  /** @type {(typeof levels)[number]} */
+  let activeLevel = levels.find((l) => l.id === levelSelect.value) ?? levels[0];
 let remainingBudget = /** @type {number | null} */ (null);
 let levelComplete = false;
 let goalStable = 0;
@@ -172,21 +192,21 @@ const brush = { down: false, x: 0, y: 0, lastX: 0, lastY: 0, mode: "paint" };
 const cursor = { x: Math.floor(sim.width / 2), y: Math.floor(sim.height / 2), has: false };
 
 /** @typedef {{base: HTMLCanvasElement | OffscreenCanvas, srcW: number, srcH: number, w: number, h: number}} StampState */
-/** @type {StampState | null} */
-let stamp = null;
+  /** @type {StampState | null} */
+  let stamp = null;
 
-const camera = { centerX: 0.5, centerY: 0.5, zoom: 1.0 };
+  const camera = { centerX: 0.5, centerY: 0.5, zoom: 1.0 };
 /** @type {{down: boolean, pointerId: number, startX: number, startY: number, startCenterX: number, startCenterY: number}} */
-const pan = { down: false, pointerId: -1, startX: 0, startY: 0, startCenterX: 0.5, startCenterY: 0.5 };
+  const pan = { down: false, pointerId: -1, startX: 0, startY: 0, startCenterX: 0.5, startCenterY: 0.5 };
 /** @type {{has: boolean, clientX: number, clientY: number}} */
-const pointerScreen = { has: false, clientX: 0, clientY: 0 };
-const keyPan = { left: false, right: false, up: false, down: false };
-let keyShiftDown = false;
+  const pointerScreen = { has: false, clientX: 0, clientY: 0 };
+  const keyPan = { left: false, right: false, up: false, down: false };
+  let keyShiftDown = false;
 
 /** @type {Map<number, {x: number, y: number}>} */
-const touchPoints = new Map();
+  const touchPoints = new Map();
 /** @type {null | {startDist: number, startZoom: number, worldU: number, worldV: number}} */
-let pinch = null;
+  let pinch = null;
 
 /**
  * @param {number} clientX
@@ -641,7 +661,6 @@ window.addEventListener(
 let lastNow = performance.now();
 let fps = 60;
 let lastStatusNow = 0;
-let didFirstRender = false;
 
 function syncRangeReadouts() {
   if (brushSizeValue) brushSizeValue.textContent = brushSize.value;
@@ -1263,10 +1282,6 @@ function loop(now) {
 
   sim.render();
   drawBrushCursor();
-  if (!didFirstRender) {
-    didFirstRender = true;
-    setLoading(false);
-  }
 
   if (dtMs > 0 && dtMs <= 250) fps = fps * 0.9 + (1000 / Math.max(1, dtMs)) * 0.1;
   if (now - lastStatusNow > 180) {
@@ -1391,4 +1406,6 @@ function drawBrushCursor() {
   cursorCtx.setLineDash([]);
 
   cursorCtx.restore();
+}
+
 }
