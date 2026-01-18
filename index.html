@@ -10,20 +10,44 @@
     <header class="topbar">
       <div class="topbar__bar" role="toolbar" aria-label="Toolbar">
         <div class="topbar__left">
-          <span class="brand">sandengine</span>
           <span class="status" id="status"></span>
+          <span class="status" id="hintStatus"></span>
         </div>
         <div class="topbar__actions">
-          <div class="segmented" role="group" aria-label="Simulation">
-            <button id="playPauseBtn" type="button">Pause</button>
-            <button id="stepBtn" type="button">Step</button>
-            <button id="clearBtn" type="button">Clear</button>
+          <div class="topbar__row topbar__row--primary" aria-label="Simulation and menu">
+            <div class="segmented" role="group" aria-label="Tool">
+              <button id="toolPaintBtn" type="button" aria-pressed="true">Paint</button>
+              <button id="toolStampBtn" type="button" aria-pressed="false">Stamp</button>
+            </div>
+            <div class="segmented" role="group" aria-label="Simulation">
+              <button id="playPauseBtn" type="button">Pause</button>
+              <button id="stepBtn" type="button">Step</button>
+              <button id="clearBtn" type="button">Clear</button>
+            </div>
+            <button id="settingsBtn" type="button" aria-controls="settingsPanel" aria-expanded="false">Menu</button>
           </div>
-          <label class="control control--select control--particle">
-            <span>Particle</span>
-            <select id="particleSelect"></select>
-          </label>
-          <button id="settingsBtn" type="button" aria-controls="settingsPanel" aria-expanded="false">Menu</button>
+          <div class="topbar__row topbar__row--secondary" aria-label="Tools">
+            <div class="hotbar" role="group" aria-label="Particles">
+              <div id="particleHotbar" class="hotbar__items"></div>
+              <button id="particleMoreBtn" class="hotbar__more" type="button">More</button>
+            </div>
+            <label class="control control--range control--brush">
+              <span>Brush</span>
+              <input id="brushSize" type="range" min="1" max="30" value="8" />
+              <output class="control__value" id="brushSizeValue">8</output>
+            </label>
+            <button id="pasteBtn" type="button">Paste</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="particlePicker" class="modal" role="dialog" aria-modal="true" aria-label="Particle picker" hidden>
+        <div class="modal__card">
+          <div class="modal__header">
+            <input id="particleSearch" class="modal__search" type="search" placeholder="Search particles…" autocomplete="off" />
+            <button id="particlePickerCloseBtn" type="button">Close</button>
+          </div>
+          <div id="particleGrid" class="particleGrid" role="listbox" aria-label="All particles"></div>
         </div>
       </div>
 
@@ -33,14 +57,13 @@
             <span>Level</span>
             <select id="levelSelect"></select>
           </label>
+          <label class="control control--select">
+            <span>Particle</span>
+            <select id="particleSelect"></select>
+          </label>
           <label class="control control--toggle">
             <span>Add</span>
             <input id="addMode" class="toggle" type="checkbox" />
-          </label>
-          <label class="control control--range">
-            <span>Brush</span>
-            <input id="brushSize" type="range" min="1" max="30" value="8" />
-            <output class="control__value" id="brushSizeValue">8</output>
           </label>
           <label class="control control--select">
             <span>Rate</span>
@@ -83,7 +106,6 @@
               <span>Edges→Stone</span>
               <input id="pasteEdgeStone" class="toggle" type="checkbox" checked />
             </label>
-            <button id="pasteBtn" type="button">Paste</button>
           </div>
           <div class="panelGroup panelGroup--stamp">
             <div class="panelRow">
@@ -110,7 +132,6 @@
           </div>
         </div>
         <div class="panelHints" aria-label="Hints">
-          <div class="hint__small" id="hintStatus"></div>
           <div class="hint__small" id="levelHint"></div>
         </div>
       </div>
