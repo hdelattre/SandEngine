@@ -150,11 +150,6 @@ levelHintEl.textContent = "";
 /** @type {GpuSim | null} */
 let sim = null;
 
-/**
- * Let the browser paint (e.g. show a loading overlay) before starting expensive
- * WebGL compilation on cold startup.
- * @returns {Promise<void>}
- */
 function nextFrame() {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }
@@ -230,7 +225,9 @@ function applyStartupParams() {
 async function boot() {
   setText(hintStatusEl, "Initializing GPU…");
   setLoading(true, "Compiling shaders…");
+  // Let the loading overlay paint before shader compilation.
   await nextFrame();
+  await new Promise((resolve) => setTimeout(resolve, 0));
 
   try {
     const limits = queryWebgl2Limits();
