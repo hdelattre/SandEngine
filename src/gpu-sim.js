@@ -1,7 +1,7 @@
 // @ts-check
 
 import { DEFAULT_AMBIENT_TEMP } from "./particles.js";
-import { CLEAR_FRAG, FULLSCREEN_VERT, HEAT_FRAG, MATTER_FRAG, PAINT_FRAG, RENDER_FRAG, STAMP_FRAG } from "./shaders.js";
+import { CLEAR_FRAG, FULLSCREEN_VERT, HEAT_FRAG, MATTER_FRAG, PAINT_FRAG, RENDER_FRAG, STAMP_FRAG, WALLS_FRAG } from "./shaders.js";
 import {
   createFramebufferForTextures,
   createFullscreenVao,
@@ -43,6 +43,8 @@ export class GpuSim {
     this.particleDefs = particleDefs;
 
     this.ambientTemp = DEFAULT_AMBIENT_TEMP;
+    this.wallsEnabled = true;
+    this.openEdgesEnabled = false;
     this.tick = 0;
     this.seed = opts.seed >>> 0;
     this.viewMode = /** @type {ViewMode} */ ("material");
@@ -82,6 +84,7 @@ export class GpuSim {
     this._matter = this._createMatterProgram();
     this._paint = this._createPaintProgram();
     this._stamp = this._createStampProgram();
+    this._walls = this._createWallsProgram();
     this._render = this._createRenderProgram();
 
     // Constant textures.
@@ -130,6 +133,7 @@ export class GpuSim {
         size: mustGetUniform(gl, program, "u_size"),
         dir: mustGetUniform(gl, program, "u_dir"),
         parity: mustGetUniform(gl, program, "u_parity"),
+        walls: mustGetUniform(gl, program, "u_walls"),
       },
     };
   }
@@ -148,6 +152,7 @@ export class GpuSim {
         thermal0: mustGetUniform(gl, program, "u_thermal0"),
         thermal1: mustGetUniform(gl, program, "u_thermal1"),
         latent: mustGetUniform(gl, program, "u_latent"),
+        walls: mustGetUniform(gl, program, "u_walls"),
       },
     };
   }
@@ -176,6 +181,8 @@ export class GpuSim {
         doMove: mustGetUniform(gl, program, "u_doMove"),
         ambientTemp: mustGetUniform(gl, program, "u_ambientTemp"),
         passSalt: mustGetUniform(gl, program, "u_passSalt"),
+        walls: mustGetUniform(gl, program, "u_walls"),
+        openEdges: mustGetUniform(gl, program, "u_openEdges"),
       },
     };
   }
@@ -411,6 +418,7 @@ export class GpuSim {
         thermal0: mustGetUniform(gl, program, "u_thermal0"),
         thermal1: mustGetUniform(gl, program, "u_thermal1"),
         latent: mustGetUniform(gl, program, "u_latent"),
+        walls: mustGetUniform(gl, program, "u_walls"),
       },
     };
   }
@@ -437,6 +445,28 @@ export class GpuSim {
         thermal0: mustGetUniform(gl, program, "u_thermal0"),
         thermal1: mustGetUniform(gl, program, "u_thermal1"),
         latent: mustGetUniform(gl, program, "u_latent"),
+        walls: mustGetUniform(gl, program, "u_walls"),
+      },
+    };
+  }
+
+  /**
+   * @returns {{program: WebGLProgram, u: Record<string, WebGLUniformLocation>}}
+   */
+  _createWallsProgram() {
+    const gl = this.gl;
+    const program = createProgram(gl, FULLSCREEN_VERT, WALLS_FRAG);
+    return {
+      program,
+      u: {
+        state: mustGetUniform(gl, program, "u_state"),
+        energy: mustGetUniform(gl, program, "u_energy"),
+        size: mustGetUniform(gl, program, "u_size"),
+        ambientTemp: mustGetUniform(gl, program, "u_ambientTemp"),
+        thermal0: mustGetUniform(gl, program, "u_thermal0"),
+        thermal1: mustGetUniform(gl, program, "u_thermal1"),
+        latent: mustGetUniform(gl, program, "u_latent"),
+        walls: mustGetUniform(gl, program, "u_walls"),
       },
     };
   }
@@ -530,6 +560,7 @@ export class GpuSim {
     gl.useProgram(program);
     gl.uniform2i(u.size, this.width, this.height);
     gl.uniform1ui(u.ambientTemp, this.ambientTemp >>> 0);
+    gl.uniform1i(u.walls, this.wallsEnabled ? 1 : 0);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this._thermal0Tex);
@@ -550,6 +581,59 @@ export class GpuSim {
     this.tick = 0;
 
     if (this._caTex[0]) this.setCaSeed(this.caSeedX, this.caSeedY);
+  }
+
+  /**
+   * @param {boolean} enabled
+   */
+  setWallsEnabled(enabled) {
+    const next = !!enabled;
+    if (this.wallsEnabled === next) return;
+    this.wallsEnabled = next;
+
+    // Apply twice to update both ping-pong buffers.
+    this._applyWallsPass();
+    this._applyWallsPass();
+  }
+
+  /**
+   * @param {boolean} enabled
+   */
+  setOpenEdgesEnabled(enabled) {
+    this.openEdgesEnabled = !!enabled;
+  }
+
+  _applyWallsPass() {
+    const gl = this.gl;
+    const { program, u } = this._walls;
+
+    gl.useProgram(program);
+    gl.uniform2i(u.size, this.width, this.height);
+    gl.uniform1ui(u.ambientTemp, this.ambientTemp >>> 0);
+    gl.uniform1i(u.walls, this.wallsEnabled ? 1 : 0);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this._srcTex());
+    gl.uniform1i(u.state, 0);
+
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this._srcEnergyTex());
+    gl.uniform1i(u.energy, 1);
+
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, this._thermal0Tex);
+    gl.uniform1i(u.thermal0, 2);
+
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, this._thermal1Tex);
+    gl.uniform1i(u.thermal1, 3);
+
+    gl.activeTexture(gl.TEXTURE4);
+    gl.bindTexture(gl.TEXTURE_2D, this._latentTex);
+    gl.uniform1i(u.latent, 4);
+
+    this._draw(program, this._dstFb(), this.width, this.height);
+    this._swap();
   }
 
   /**
@@ -612,6 +696,7 @@ export class GpuSim {
     gl.uniform2i(u.size, this.width, this.height);
     gl.uniform2i(u.dir, dx, dy);
     gl.uniform1i(u.parity, parity);
+    gl.uniform1i(u.walls, this.wallsEnabled ? 1 : 0);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this._srcTex());
@@ -659,6 +744,8 @@ export class GpuSim {
     gl.uniform1i(u.doMove, doMove);
     gl.uniform1ui(u.ambientTemp, this.ambientTemp >>> 0);
     gl.uniform1ui(u.passSalt, passSalt >>> 0);
+    gl.uniform1i(u.walls, this.wallsEnabled ? 1 : 0);
+    gl.uniform1i(u.openEdges, this.openEdgesEnabled ? 1 : 0);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this._srcTex());
@@ -872,6 +959,7 @@ export class GpuSim {
     gl.uniform1i(u.radius, radius | 0);
     gl.uniform4ui(u.paint, cell.id >>> 0, clampByte(cell.temp) >>> 0, clampByte(cell.data) >>> 0, clampByte(cell.flags) >>> 0);
     gl.uniform1i(u.addMode, addMode ? 1 : 0);
+    gl.uniform1i(u.walls, this.wallsEnabled ? 1 : 0);
     gl.uniform1ui(u.seed, this.seed >>> 0);
     gl.uniform1ui(u.tick, this.tick >>> 0);
 
@@ -933,6 +1021,7 @@ export class GpuSim {
     gl.uniform1ui(u.ambientTemp, this.ambientTemp >>> 0);
     gl.uniform1i(u.edgeStone, edgeStone ? 1 : 0);
     gl.uniform1i(u.addMode, addMode ? 1 : 0);
+    gl.uniform1i(u.walls, this.wallsEnabled ? 1 : 0);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this._srcTex());

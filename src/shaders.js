@@ -28,6 +28,7 @@ uniform usampler2D u_latent;
 uniform ivec2 u_size;
 uniform ivec2 u_dir;
 uniform int u_parity;
+uniform int u_walls;
 
 layout(location = 0) out uvec4 outState;
 layout(location = 1) out uvec4 outEnergy;
@@ -35,7 +36,9 @@ layout(location = 1) out uvec4 outEnergy;
 const uint FLAG_IMMOVABLE = 1u << 0u;
 
 bool inBounds(ivec2 c) {
-  return c.x >= 0 && c.y >= 0 && c.x < u_size.x && c.y < u_size.y;
+  if (c.x < 0 || c.y < 0 || c.x >= u_size.x || c.y >= u_size.y) return false;
+  if (u_walls != 0 && (c.y == 0 || c.x == 0 || c.x == (u_size.x - 1))) return false;
+  return true;
 }
 
 uvec4 loadState(ivec2 c) {
@@ -177,6 +180,7 @@ uniform uint u_ambientTemp;
 uniform usampler2D u_thermal0;
 uniform usampler2D u_thermal1;
 uniform usampler2D u_latent;
+uniform int u_walls;
 
 layout(location = 0) out uvec4 outState;
 layout(location = 1) out uvec4 outEnergy;
@@ -228,10 +232,89 @@ uvec4 packEnergy(uint e) {
 void main() {
   ivec2 c = ivec2(gl_FragCoord.xy);
   // Bottom + side walls; top is open.
-  bool wall = (c.y == 0) || (c.x == 0) || (c.x == (u_size.x - 1));
+  bool wall = (u_walls != 0) && ((c.y == 0) || (c.x == 0) || (c.x == (u_size.x - 1)));
   uint id = wall ? P_STONE : P_EMPTY;
   outState = uvec4(id, u_ambientTemp, 0u, 0u);
   outEnergy = packEnergy(energyForTemp(id, u_ambientTemp));
+}
+`;
+
+export const WALLS_FRAG = `#version 300 es
+precision highp int;
+precision highp usampler2D;
+
+uniform usampler2D u_state;
+uniform usampler2D u_energy;
+uniform ivec2 u_size;
+uniform uint u_ambientTemp;
+uniform usampler2D u_thermal0;
+uniform usampler2D u_thermal1;
+uniform usampler2D u_latent;
+uniform int u_walls;
+
+layout(location = 0) out uvec4 outState;
+layout(location = 1) out uvec4 outEnergy;
+
+const uint P_EMPTY = 0u;
+const uint P_STONE = 3u;
+
+uvec4 loadThermal0(uint id) {
+  return texelFetch(u_thermal0, ivec2(int(id), 0), 0);
+}
+
+uvec4 loadThermal1(uint id) {
+  return texelFetch(u_thermal1, ivec2(int(id), 0), 0);
+}
+
+uint unpackU16(uvec2 lohi) {
+  return lohi.x | (lohi.y << 8u);
+}
+
+uint latentFusion(uint id) {
+  uvec4 t = texelFetch(u_latent, ivec2(int(id), 0), 0);
+  return unpackU16(t.rg);
+}
+
+uint latentVapor(uint id) {
+  uvec4 t = texelFetch(u_latent, ivec2(int(id), 0), 0);
+  return unpackU16(t.ba);
+}
+
+uint energyForTemp(uint id, uint temp) {
+  uvec4 th0 = loadThermal0(id);
+  uint c = max(1u, th0.r);
+  uint lf = latentFusion(id);
+  uint lv = latentVapor(id);
+  uvec4 ph = loadThermal1(id);
+  uint solidId = ph.r;
+  uint liquidId = ph.g;
+  uint gasId = ph.b;
+  uint e = c * temp;
+  if (id == liquidId && liquidId != solidId) e += lf;
+  else if (id == gasId && gasId != liquidId) e += (lf + lv);
+  return min(65535u, e);
+}
+
+uvec4 packEnergyKeepBA(uint e, uvec2 ba) {
+  return uvec4(e & 255u, (e >> 8u) & 255u, ba.x, ba.y);
+}
+
+void main() {
+  ivec2 c = ivec2(gl_FragCoord.xy);
+  uvec4 cur = texelFetch(u_state, c, 0);
+  uvec4 curE = texelFetch(u_energy, c, 0);
+
+  bool isWall = (c.y == 0) || (c.x == 0) || (c.x == (u_size.x - 1));
+  if (!isWall) {
+    outState = cur;
+    outEnergy = curE;
+    return;
+  }
+
+  uint id = (u_walls != 0) ? P_STONE : P_EMPTY;
+  uvec4 s = uvec4(id, u_ambientTemp, 0u, 0u);
+  outState = s;
+  outEnergy = packEnergyKeepBA(energyForTemp(id, u_ambientTemp), curE.ba);
 }
 `;
 
@@ -255,6 +338,8 @@ uniform int u_selfStep;
 uniform int u_doMove;
 uniform uint u_ambientTemp;
 uniform uint u_passSalt;
+uniform int u_walls;
+uniform int u_openEdges;
 
 layout(location = 0) out uvec4 outState;
 layout(location = 1) out uvec4 outEnergy;
@@ -302,7 +387,9 @@ const uint LAVA_HARDEN_THRESHOLD = 180u;
 const uint T_LAVA_RESOFTEN = 170u;
 
 bool inBounds(ivec2 c) {
-  return c.x >= 0 && c.y >= 0 && c.x < u_size.x && c.y < u_size.y;
+  if (c.x < 0 || c.y < 0 || c.x >= u_size.x || c.y >= u_size.y) return false;
+  if (u_walls != 0 && (c.y == 0 || c.x == 0 || c.x == (u_size.x - 1))) return false;
+  return true;
 }
 
 uvec4 loadState(ivec2 c) {
@@ -1158,6 +1245,15 @@ void selfUpdate(ivec2 c, inout uvec4 s, inout uint e, uint salt) {
     }
   }
 
+  if (u_openEdges != 0 && id != P_EMPTY) {
+    if (c.x == 0 || c.y == 0 || c.x == (u_size.x - 1) || c.y == (u_size.y - 1)) {
+      id = P_EMPTY;
+      data = 0u;
+      meta = 0u;
+      e = energyForTemp(P_EMPTY, u_ambientTemp);
+    }
+  }
+
   s.r = id;
   s.b = data;
   s.a = meta;
@@ -1937,6 +2033,7 @@ uniform uvec4 u_paint;
 uniform uint u_seed;
 uniform uint u_tick;
 uniform int u_addMode;
+uniform int u_walls;
 
 layout(location = 0) out uvec4 outState;
 layout(location = 1) out uvec4 outEnergy;
@@ -2024,6 +2121,12 @@ void main() {
   }
   uvec4 cur = texelFetch(u_state, c, 0);
   uvec4 curE = texelFetch(u_energy, c, 0);
+
+  if (u_walls != 0 && (c.y == 0 || c.x == 0 || c.x == (u_size.x - 1))) {
+    outState = cur;
+    outEnergy = curE;
+    return;
+  }
 
   ivec2 d = c - u_center;
   int r2 = u_radius * u_radius;
@@ -2161,6 +2264,7 @@ uniform ivec2 u_origin;
 uniform uint u_ambientTemp;
 uniform int u_edgeStone;
 uniform int u_addMode;
+uniform int u_walls;
 
 layout(location = 0) out uvec4 outState;
 layout(location = 1) out uvec4 outEnergy;
@@ -2283,7 +2387,7 @@ void main() {
   uvec4 curE = loadEnergy(c);
 
   // Preserve boundaries (bottom + side walls).
-  if (c.x == 0 || c.x == (u_size.x - 1) || c.y == 0) {
+  if (u_walls != 0 && (c.x == 0 || c.x == (u_size.x - 1) || c.y == 0)) {
     outState = cur;
     outEnergy = curE;
     return;

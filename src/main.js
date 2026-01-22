@@ -111,6 +111,7 @@ const stampW = /** @type {HTMLInputElement} */ (document.getElementById("stampW"
 const stampH = /** @type {HTMLInputElement} */ (document.getElementById("stampH"));
 const stampLock = /** @type {HTMLInputElement} */ (document.getElementById("stampLock"));
 const addMode = /** @type {HTMLInputElement} */ (document.getElementById("addMode"));
+const openEdges = /** @type {HTMLInputElement} */ (document.getElementById("openEdges"));
 const caRule = /** @type {HTMLInputElement} */ (document.getElementById("caRule"));
 const caInterval = /** @type {HTMLInputElement} */ (document.getElementById("caInterval"));
 const caPaintSelect = /** @type {HTMLSelectElement} */ (document.getElementById("caPaintSelect"));
@@ -291,6 +292,8 @@ void boot();
 function startApp() {
   if (!sim) return;
   let didAutoStartupStamp = false;
+  sim.setOpenEdgesEnabled(openEdges.checked);
+  sim.setWallsEnabled(!openEdges.checked);
 
   /** @type {(typeof levels)[number]} */
   let activeLevel = levels.find((l) => l.id === levelSelect.value) ?? levels[0];
@@ -795,6 +798,15 @@ stampMode.addEventListener("change", () => {
   }
   if (stampMode.checked) setTool("stamp");
   else if (activeTool === "stamp") setTool("paint");
+});
+
+openEdges.addEventListener("change", () => {
+  if (activeLevel.id !== LEVEL_ID.SANDBOX) {
+    openEdges.checked = false;
+    return;
+  }
+  sim.setOpenEdgesEnabled(openEdges.checked);
+  sim.setWallsEnabled(!openEdges.checked);
 });
 syncStampInputsFromState();
 syncToolUi();
@@ -1337,6 +1349,7 @@ function setActiveLevel(levelId) {
   toolCopyBtn.disabled = !isSandbox;
   resSelect.disabled = !isSandbox;
   pasteEdgeStone.disabled = !isSandbox;
+  openEdges.disabled = !isSandbox;
   agentPaintSelect.disabled = !isSandbox;
   agentDirSelect.disabled = !isSandbox;
   agentDrill.disabled = !isSandbox;
@@ -1351,6 +1364,8 @@ function setActiveLevel(levelId) {
     const { width, height } = parseRes(resSelect.value);
     if (sim.width !== width || sim.height !== height) sim.setWorldSize(width, height);
     else sim.clear();
+    sim.setOpenEdgesEnabled(openEdges.checked);
+    sim.setWallsEnabled(!openEdges.checked);
     if (stamp) setStampSize(stamp.w, stamp.h);
     clampCamera();
     void autoStampStartupOnce();
