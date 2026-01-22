@@ -983,6 +983,27 @@ export class GpuSim {
   }
 
   /**
+   * Reads a region of cells back to CPU (slow).
+   * @param {number} x
+   * @param {number} y
+   * @param {number} w
+   * @param {number} h
+   * @returns {Uint8Array}
+   */
+  readRegion(x, y, w, h) {
+    const gl = this.gl;
+    const ww = w | 0;
+    const hh = h | 0;
+    if (ww <= 0 || hh <= 0) return new Uint8Array(0);
+    const out = new Uint8Array(ww * hh * 4);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this._worldFb[this._front]);
+    gl.readBuffer(gl.COLOR_ATTACHMENT0);
+    gl.readPixels(x | 0, y | 0, ww, hh, gl.RGBA_INTEGER, gl.UNSIGNED_BYTE, out);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return out;
+  }
+
+  /**
    * Resize the drawing buffer to match the CSS size.
    */
   resizeCanvasToDisplaySize() {

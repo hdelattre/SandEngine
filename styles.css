@@ -145,7 +145,7 @@ body {
     left: 50%;
     right: auto;
     transform: translateX(-50%);
-    width: min(980px, calc(100vw - 24px));
+    width: min(760px, calc(100vw - 24px));
     top: calc(100% + 8px);
     border: 1px solid var(--border);
     border-top: 1px solid var(--border);
@@ -157,17 +157,12 @@ body {
   margin-top: 10px;
   padding-top: 10px;
   border-top: 1px solid color-mix(in oklab, var(--border), transparent 25%);
-  max-width: 1100px;
-  margin-left: auto;
-  margin-right: auto;
 }
 
 .panelGrid {
   display: grid;
   gap: 8px;
   align-items: center;
-  max-width: 1100px;
-  margin: 0 auto;
   grid-template-columns: 1fr;
 }
 

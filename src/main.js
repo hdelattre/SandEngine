@@ -79,6 +79,7 @@ const stepBtn = /** @type {HTMLButtonElement} */ (document.getElementById("stepB
 const clearBtn = /** @type {HTMLButtonElement} */ (document.getElementById("clearBtn"));
 const toolPaintBtn = /** @type {HTMLButtonElement} */ (document.getElementById("toolPaintBtn"));
 const toolStampBtn = /** @type {HTMLButtonElement} */ (document.getElementById("toolStampBtn"));
+const toolCopyBtn = /** @type {HTMLButtonElement} */ (document.getElementById("toolCopyBtn"));
 const levelSelect = /** @type {HTMLSelectElement} */ (document.getElementById("levelSelect"));
 const particleSelect = /** @type {HTMLSelectElement} */ (document.getElementById("particleSelect"));
 const particleHotbar = /** @type {HTMLDivElement} */ (document.getElementById("particleHotbar"));
@@ -307,10 +308,17 @@ const cursor = { x: Math.floor(sim.width / 2), y: Math.floor(sim.height / 2), ha
 /** @type {StampState | null} */
 let stamp = null;
 
-/** @type {'paint'|'stamp'} */
+/** @type {'paint'|'stamp'|'copy'} */
 let activeTool = "paint";
 
 const pasteEdgeStoneWrap = pasteEdgeStone.closest("label");
+/** @type {{active: boolean, pointerId: number, x0: number, y0: number, x1: number, y1: number}} */
+const copySel = { active: false, pointerId: -1, x0: 0, y0: 0, x1: 0, y1: 0 };
+
+function cancelCopySelection() {
+  copySel.active = false;
+  copySel.pointerId = -1;
+}
 
 /**
  * @param {number} id
@@ -735,28 +743,31 @@ stampH.addEventListener("input", onStampHInput);
 
 function refreshToolbarVisibility() {
   const isStamp = activeTool === "stamp";
+  const isCopy = activeTool === "copy";
   const selectedParticle = Number(particleSelect.value) | 0;
   const isAgent = selectedParticle === Particle.BOT || selectedParticle === Particle.GLIDER;
-  brushControl.hidden = isStamp;
+  brushControl.hidden = isStamp || isCopy;
   stampControls.hidden = !isStamp;
-  agentPaintControl.hidden = isStamp || !isAgent;
-  agentDirControl.hidden = isStamp || !isAgent;
-  agentDrillControl.hidden = isStamp || !isAgent;
-  singlePaintControl.hidden = isStamp;
+  agentPaintControl.hidden = isStamp || isCopy || !isAgent;
+  agentDirControl.hidden = isStamp || isCopy || !isAgent;
+  agentDrillControl.hidden = isStamp || isCopy || !isAgent;
+  singlePaintControl.hidden = isStamp || isCopy;
   if (pasteEdgeStoneWrap) pasteEdgeStoneWrap.hidden = !isStamp;
 }
 
 function syncToolUi() {
   toolPaintBtn.setAttribute("aria-pressed", activeTool === "paint" ? "true" : "false");
   toolStampBtn.setAttribute("aria-pressed", activeTool === "stamp" ? "true" : "false");
+  toolCopyBtn.setAttribute("aria-pressed", activeTool === "copy" ? "true" : "false");
   refreshToolbarVisibility();
   buildHotbar();
 }
 
 /**
- * @param {'paint'|'stamp'} tool
+ * @param {'paint'|'stamp'|'copy'} tool
  */
 function setTool(tool) {
+  if (tool !== "copy" && copySel.active) cancelCopySelection();
   if (tool === "stamp") {
     if (!stamp) {
       notify("paste an image to stamp first");
@@ -774,6 +785,7 @@ function setTool(tool) {
 
 toolPaintBtn.addEventListener("click", () => setTool("paint"));
 toolStampBtn.addEventListener("click", () => setTool("stamp"));
+toolCopyBtn.addEventListener("click", () => setTool("copy"));
 
 stampMode.addEventListener("change", () => {
   if (!stamp) {
@@ -833,6 +845,19 @@ canvas.addEventListener("pointerdown", (e) => {
     pan.startY = e.clientY;
     pan.startCenterX = camera.centerX;
     pan.startCenterY = camera.centerY;
+    return;
+  }
+
+  if (activeTool === "copy" && e.button === 0 && !e.shiftKey && !e.altKey) {
+    if (activeLevel.id !== LEVEL_ID.SANDBOX) return;
+    e.preventDefault();
+    brush.down = false;
+    copySel.active = true;
+    copySel.pointerId = e.pointerId;
+    copySel.x0 = x;
+    copySel.y0 = y;
+    copySel.x1 = x;
+    copySel.y1 = y;
     return;
   }
 
@@ -909,6 +934,11 @@ canvas.addEventListener("pointermove", (e) => {
   cursor.x = x;
   cursor.y = y;
   cursor.has = true;
+  if (copySel.active && e.pointerId === copySel.pointerId) {
+    copySel.x1 = x;
+    copySel.y1 = y;
+    return;
+  }
   if (brush.down) {
     brush.x = x;
     brush.y = y;
@@ -934,6 +964,55 @@ canvas.addEventListener("pointerup", (e) => {
     pointerScreen.has = false;
     cursor.has = false;
   }
+
+  if (copySel.active && e.pointerId === copySel.pointerId) {
+    const x0 = clampInt(Math.min(copySel.x0, copySel.x1), 0, sim.width - 1);
+    const x1 = clampInt(Math.max(copySel.x0, copySel.x1), 0, sim.width - 1);
+    const y0 = clampInt(Math.min(copySel.y0, copySel.y1), 0, sim.height - 1);
+    const y1 = clampInt(Math.max(copySel.y0, copySel.y1), 0, sim.height - 1);
+    cancelCopySelection();
+
+    const w = (x1 - x0 + 1) | 0;
+    const h = (y1 - y0 + 1) | 0;
+    const raw = sim.readRegion(x0, y0, w, h);
+
+    const base = document.createElement("canvas");
+    base.width = w;
+    base.height = h;
+    const ctx = base.getContext("2d");
+    if (!ctx) return;
+    const img = ctx.createImageData(w, h);
+    const d = img.data;
+
+    for (let iy = 0; iy < h; iy++) {
+      const dstY = h - 1 - iy;
+      for (let ix = 0; ix < w; ix++) {
+        const s = (iy * w + ix) * 4;
+        const id = raw[s] | 0;
+        const o = (dstY * w + ix) * 4;
+        if (id === Particle.EMPTY) {
+          d[o + 0] = 255;
+          d[o + 1] = 255;
+          d[o + 2] = 255;
+          d[o + 3] = 255;
+          continue;
+        }
+        const def = particleDefs[id];
+        const col = def ? def.color : particleDefs[Particle.STONE].color;
+        d[o + 0] = col[0] | 0;
+        d[o + 1] = col[1] | 0;
+        d[o + 2] = col[2] | 0;
+        d[o + 3] = 255;
+      }
+    }
+
+    ctx.putImageData(img, 0, 0);
+    stamp = { base, srcW: w, srcH: h, w, h };
+    stampMode.checked = true;
+    setTool("stamp");
+    syncStampInputsFromState();
+    pushRecentStamp(stamp);
+  }
 });
 canvas.addEventListener("pointercancel", (e) => {
   if (pan.down && e.pointerId === pan.pointerId) pan.down = false;
@@ -943,6 +1022,7 @@ canvas.addEventListener("pointercancel", (e) => {
     pointerScreen.has = false;
     cursor.has = false;
   }
+  if (copySel.active && e.pointerId === copySel.pointerId) cancelCopySelection();
 });
 
 canvas.addEventListener(
@@ -1254,6 +1334,7 @@ function setActiveLevel(levelId) {
   }
   particleMoreBtn.disabled = !isSandbox;
   toolStampBtn.disabled = !isSandbox;
+  toolCopyBtn.disabled = !isSandbox;
   resSelect.disabled = !isSandbox;
   pasteEdgeStone.disabled = !isSandbox;
   agentPaintSelect.disabled = !isSandbox;
@@ -1696,6 +1777,19 @@ window.addEventListener("keydown", (e) => {
     return;
   }
 
+  if (activeTool === "copy" && copySel.active && e.key === "Escape") {
+    e.preventDefault();
+    cancelCopySelection();
+    return;
+  }
+
+  if (e.key === "x" || e.key === "X") {
+    if (activeLevel.id !== LEVEL_ID.SANDBOX) return;
+    e.preventDefault();
+    setTool("copy");
+    return;
+  }
+
   if (e.key === "a" || e.key === "A") {
     e.preventDefault();
     addMode.checked = !addMode.checked;
@@ -2017,6 +2111,50 @@ function drawBrushCursor() {
   const sv = (v - camera.centerY) * camera.zoom + 0.5;
   const cx = su * w;
   const cy = (1 - sv) * h;
+
+  if (activeTool === "copy") {
+    const xA = copySel.active ? copySel.x0 : x;
+    const yA = copySel.active ? copySel.y0 : y;
+    const xB = copySel.active ? copySel.x1 : x;
+    const yB = copySel.active ? copySel.y1 : y;
+    const ox = clampInt(Math.min(xA, xB), 0, sim.width - 1);
+    const oy = clampInt(Math.min(yA, yB), 0, sim.height - 1);
+    const ex = clampInt(Math.max(xA, xB) + 1, 0, sim.width);
+    const ey = clampInt(Math.max(yA, yB) + 1, 0, sim.height);
+
+    const u0 = ox / sim.width;
+    const v0 = oy / sim.height;
+    const u1 = ex / sim.width;
+    const v1 = ey / sim.height;
+    const su0 = (u0 - camera.centerX) * camera.zoom + 0.5;
+    const sv0 = (v0 - camera.centerY) * camera.zoom + 0.5;
+    const su1 = (u1 - camera.centerX) * camera.zoom + 0.5;
+    const sv1 = (v1 - camera.centerY) * camera.zoom + 0.5;
+
+    const left = su0 * w;
+    const right = su1 * w;
+    const top = (1 - sv1) * h;
+    const bottom = (1 - sv0) * h;
+    const bw = right - left;
+    const bh = bottom - top;
+
+    cursorCtx.save();
+    cursorCtx.beginPath();
+    cursorCtx.rect(left, top, bw, bh);
+    cursorCtx.strokeStyle = "rgba(0, 0, 0, 0.28)";
+    cursorCtx.lineWidth = cellPx + 2;
+    cursorCtx.stroke();
+
+    cursorCtx.setLineDash([6 * cellPx, 4 * cellPx]);
+    cursorCtx.beginPath();
+    cursorCtx.rect(left, top, bw, bh);
+    cursorCtx.strokeStyle = "rgba(124, 196, 255, 0.4)";
+    cursorCtx.lineWidth = cellPx;
+    cursorCtx.stroke();
+    cursorCtx.setLineDash([]);
+    cursorCtx.restore();
+    return;
+  }
 
   if (stampMode.checked && stamp) {
     const maxW = Math.max(1, sim.width - 2);
