@@ -50,7 +50,7 @@
  */
 
 /**
- * @typedef {'material'|'temperature'} ViewMode
+ * @typedef {'material'|'temperature'|'wind'} ViewMode
  */
 
 /**

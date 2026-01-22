@@ -528,6 +528,7 @@ export class GpuSim {
       program,
       u: {
         state: mustGetUniform(gl, program, "u_state"),
+        energy: mustGetUniform(gl, program, "u_energy"),
         palette: mustGetUniform(gl, program, "u_palette"),
         size: mustGetUniform(gl, program, "u_size"),
         viewMode: mustGetUniform(gl, program, "u_viewMode"),
@@ -1195,7 +1196,7 @@ export class GpuSim {
 
     gl.useProgram(program);
     gl.uniform2i(u.size, this.width, this.height);
-    gl.uniform1i(u.viewMode, this.viewMode === "temperature" ? 1 : 0);
+    gl.uniform1i(u.viewMode, this.viewMode === "temperature" ? 1 : this.viewMode === "wind" ? 2 : 0);
     gl.uniform1ui(u.ambientTemp, this.ambientTemp >>> 0);
     gl.uniform2f(u.camCenter, this.camCenterX, this.camCenterY);
     gl.uniform1f(u.camZoom, this.camZoom);
@@ -1207,6 +1208,10 @@ export class GpuSim {
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this._paletteTex);
     gl.uniform1i(u.palette, 1);
+
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, this._srcEnergyTex());
+    gl.uniform1i(u.energy, 2);
 
     this._draw(program, null, this.canvas.width, this.canvas.height);
   }

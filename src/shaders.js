@@ -2656,9 +2656,10 @@ precision highp usampler2D;
 in vec2 v_uv;
 
 uniform usampler2D u_state;
+uniform usampler2D u_energy;
 uniform sampler2D u_palette;
 uniform ivec2 u_size;
-uniform int u_viewMode; // 0 material, 1 temperature
+uniform int u_viewMode; // 0 material, 1 temperature, 2 wind
 uniform uint u_ambientTemp;
 uniform vec2 u_camCenter;
 uniform float u_camZoom;
@@ -2666,6 +2667,30 @@ uniform float u_camZoom;
 out vec4 outColor;
 
 const uint P_EMPTY = 0u;
+const float TAU = 6.28318530718;
+
+vec3 hsv2rgb(vec3 c) {
+  vec3 rgb = clamp(abs(mod(c.x * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
+  rgb = rgb * rgb * (3.0 - 2.0 * rgb);
+  return c.z * mix(vec3(1.0), rgb, c.y);
+}
+
+vec2 decodeComplex(uvec2 ba) {
+  return (vec2(ba) - 128.0) / 128.0;
+}
+
+vec2 windAt(ivec2 c) {
+  uvec4 e = texelFetch(u_energy, c, 0);
+  return decodeComplex(e.ba);
+}
+
+vec3 windColor(vec2 w) {
+  float mag = clamp(length(w), 0.0, 1.0);
+  if (mag < 1e-4) return vec3(0.0);
+  float hue = atan(w.y, w.x) / TAU + 0.5;
+  float val = pow(mag, 0.6);
+  return hsv2rgb(vec3(hue, 0.9, val));
+}
 
 vec3 temperatureColor(float t) {
   // 0..1: cold->hot
@@ -2705,6 +2730,8 @@ void main() {
     uint temp = s.g;
     if (u_viewMode == 1) {
       outColor = vec4(temperatureColor(float(temp) / 255.0), 1.0);
+    } else if (u_viewMode == 2) {
+      outColor = vec4(windColor(windAt(c)), 1.0);
     } else {
       outColor = vec4(shadeMaterial(id, temp), 1.0);
     }
@@ -2725,6 +2752,12 @@ void main() {
   if (u_viewMode == 1) {
     float t = (float(a.g) + float(b.g) + float(c.g) + float(d.g)) * 0.25 / 255.0;
     outColor = vec4(temperatureColor(t), 1.0);
+    return;
+  }
+
+  if (u_viewMode == 2) {
+    vec2 w = (windAt(s00) + windAt(s10) + windAt(s01) + windAt(s11)) * 0.25;
+    outColor = vec4(windColor(w), 1.0);
     return;
   }
 

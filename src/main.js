@@ -291,13 +291,14 @@ async function boot() {
 void boot();
 
 function startApp() {
-  if (!sim) return;
-  let didAutoStartupStamp = false;
-  sim.setOpenEdgesEnabled(openEdges.checked);
-  sim.setWallsEnabled(!openEdges.checked);
 
-  /** @type {(typeof levels)[number]} */
-  let activeLevel = levels.find((l) => l.id === levelSelect.value) ?? levels[0];
+if (!sim) return;
+let didAutoStartupStamp = false;
+sim.setOpenEdgesEnabled(openEdges.checked);
+sim.setWallsEnabled(!openEdges.checked);
+
+/** @type {(typeof levels)[number]} */
+let activeLevel = levels.find((l) => l.id === levelSelect.value) ?? levels[0];
 let remainingBudget = /** @type {number | null} */ (null);
 let levelComplete = false;
 let goalStable = 0;
@@ -1884,7 +1885,8 @@ window.addEventListener("keydown", (e) => {
   }
 
   if (e.key === "t" || e.key === "T") {
-    viewSelect.value = viewSelect.value === "material" ? "temperature" : "material";
+    viewSelect.value =
+      viewSelect.value === "material" ? "temperature" : viewSelect.value === "temperature" ? "wind" : "material";
     sim.setViewMode(/** @type {ViewMode} */ (viewSelect.value));
     return;
   }
