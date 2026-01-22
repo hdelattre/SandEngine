@@ -1686,6 +1686,12 @@ function loop(now) {
     brush.lastY = y1;
   }
 
+  const fpsDtMs = clamp(dtMs, 1, 2000);
+  const instFps = 1000 / fpsDtMs;
+  // Exponential smoothing with a fixed time constant (so it converges quickly even at very low FPS)
+  const fpsAlpha = 1 - Math.exp(-(fpsDtMs / 1000) / 0.5);
+  fps += (instFps - fps) * fpsAlpha;
+
   const dtSeconds = dtMs / 1000;
 
   if (keyPan.left || keyPan.right || keyPan.up || keyPan.down) {
@@ -1757,7 +1763,8 @@ function loop(now) {
 
   if (dtSeconds > 0) {
     const effSps = steps / dtSeconds;
-    simEffectiveSpsEma = simEffectiveSpsEma * 0.9 + effSps * 0.1;
+    const spsAlpha = 1 - Math.exp(-dtSeconds / 0.6);
+    simEffectiveSpsEma += (effSps - simEffectiveSpsEma) * spsAlpha;
   }
 
   if (mode === "sps") {
