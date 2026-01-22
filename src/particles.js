@@ -25,6 +25,13 @@ export const Particle = /** @type {const} */ ({
   BATTERY: 18,
   BOT: 19,
   GLIDER: 20,
+  CIRCUIT_WIRE: 21,
+  CIRCUIT_POWER: 22,
+  CIRCUIT_LAMP: 23,
+  CIRCUIT_NOT_N: 24,
+  CIRCUIT_NOT_E: 25,
+  CIRCUIT_NOT_S: 26,
+  CIRCUIT_NOT_W: 27,
 });
 
 export const ParticleFlag = /** @type {const} */ ({
@@ -238,6 +245,62 @@ export function createParticleDefs() {
     mobility: 0,
     flags: ParticleFlag.IMMOVABLE,
   });
+  defs[Particle.CIRCUIT_WIRE] = makeDef(Particle.CIRCUIT_WIRE, {
+    name: "Circuit Wire",
+    color: [146, 62, 54],
+    density: 255,
+    conductivity: 255,
+    mobility: 0,
+    flags: ParticleFlag.IMMOVABLE,
+  });
+  defs[Particle.CIRCUIT_POWER] = makeDef(Particle.CIRCUIT_POWER, {
+    name: "Power Source",
+    color: [220, 56, 48],
+    density: 255,
+    conductivity: 230,
+    mobility: 0,
+    flags: ParticleFlag.IMMOVABLE,
+  });
+  defs[Particle.CIRCUIT_LAMP] = makeDef(Particle.CIRCUIT_LAMP, {
+    name: "Lamp",
+    color: [120, 110, 92],
+    density: 255,
+    conductivity: 200,
+    mobility: 0,
+    flags: ParticleFlag.IMMOVABLE,
+  });
+  defs[Particle.CIRCUIT_NOT_N] = makeDef(Particle.CIRCUIT_NOT_N, {
+    name: "Inverter (N)",
+    color: [210, 176, 64],
+    density: 255,
+    conductivity: 220,
+    mobility: 0,
+    flags: ParticleFlag.IMMOVABLE,
+  });
+  defs[Particle.CIRCUIT_NOT_E] = makeDef(Particle.CIRCUIT_NOT_E, {
+    name: "Inverter (E)",
+    color: [210, 156, 64],
+    density: 255,
+    conductivity: 220,
+    mobility: 0,
+    flags: ParticleFlag.IMMOVABLE,
+  });
+  defs[Particle.CIRCUIT_NOT_S] = makeDef(Particle.CIRCUIT_NOT_S, {
+    name: "Inverter (S)",
+    color: [210, 136, 64],
+    density: 255,
+    conductivity: 220,
+    mobility: 0,
+    flags: ParticleFlag.IMMOVABLE,
+  });
+  defs[Particle.CIRCUIT_NOT_W] = makeDef(Particle.CIRCUIT_NOT_W, {
+    name: "Inverter (W)",
+    color: [210, 116, 64],
+    density: 255,
+    conductivity: 220,
+    mobility: 0,
+    flags: ParticleFlag.IMMOVABLE,
+  });
 
   return defs;
 }
@@ -324,6 +387,21 @@ export function defaultCellForParticle(id) {
     case Particle.WIRE:
       // `flags` is per-cell metadata in state.a; for Wire it encodes an arc cooldown.
       return { temp: DEFAULT_AMBIENT_TEMP, data: 0, flags: 0 };
+    case Particle.CIRCUIT_WIRE:
+      // `data` stores circuit power (0..15).
+      return { temp: DEFAULT_AMBIENT_TEMP, data: 0, flags: 0 };
+    case Particle.CIRCUIT_POWER:
+      // Constant power source (15).
+      return { temp: DEFAULT_AMBIENT_TEMP, data: 15, flags: 0 };
+    case Particle.CIRCUIT_LAMP:
+      // `data` is driven by the circuit system (0 or 15 for now).
+      return { temp: DEFAULT_AMBIENT_TEMP, data: 0, flags: 0 };
+    case Particle.CIRCUIT_NOT_N:
+    case Particle.CIRCUIT_NOT_E:
+    case Particle.CIRCUIT_NOT_S:
+    case Particle.CIRCUIT_NOT_W:
+      // Defaults "on" (unpowered input).
+      return { temp: DEFAULT_AMBIENT_TEMP, data: 15, flags: 0 };
     case Particle.MUD:
       return { temp: DEFAULT_AMBIENT_TEMP, data: 200, flags: 0 };
     case Particle.WATER:

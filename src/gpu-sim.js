@@ -83,6 +83,9 @@ export class GpuSim {
 
     this._vao = createFullscreenVao(gl);
 
+    /** @type {WebGLProgram | null} */
+    this._activeProgram = null;
+
     // Programs.
     this._heat = this._createHeatProgram();
     this._clear = this._createClearProgram();
@@ -129,7 +132,7 @@ export class GpuSim {
   _createHeatProgram() {
     const gl = this.gl;
     const program = createProgram(gl, FULLSCREEN_VERT, HEAT_FRAG);
-    return {
+    const out = {
       program,
       u: {
         state: mustGetUniform(gl, program, "u_state"),
@@ -143,6 +146,15 @@ export class GpuSim {
         walls: mustGetUniform(gl, program, "u_walls"),
       },
     };
+
+    this._useProgram(program);
+    gl.uniform1i(out.u.state, 0);
+    gl.uniform1i(out.u.energy, 1);
+    gl.uniform1i(out.u.props, 2);
+    gl.uniform1i(out.u.thermal0, 3);
+    gl.uniform1i(out.u.latent, 4);
+
+    return out;
   }
 
   /**
@@ -151,7 +163,7 @@ export class GpuSim {
   _createClearProgram() {
     const gl = this.gl;
     const program = createProgram(gl, FULLSCREEN_VERT, CLEAR_FRAG);
-    return {
+    const out = {
       program,
       u: {
         size: mustGetUniform(gl, program, "u_size"),
@@ -162,6 +174,13 @@ export class GpuSim {
         walls: mustGetUniform(gl, program, "u_walls"),
       },
     };
+
+    this._useProgram(program);
+    gl.uniform1i(out.u.thermal0, 0);
+    gl.uniform1i(out.u.thermal1, 1);
+    gl.uniform1i(out.u.latent, 2);
+
+    return out;
   }
 
   /**
@@ -170,7 +189,7 @@ export class GpuSim {
   _createMatterProgram() {
     const gl = this.gl;
     const program = createProgram(gl, FULLSCREEN_VERT, MATTER_FRAG);
-    return {
+    const out = {
       program,
       u: {
         state: mustGetUniform(gl, program, "u_state"),
@@ -192,6 +211,16 @@ export class GpuSim {
         openEdges: mustGetUniform(gl, program, "u_openEdges"),
       },
     };
+
+    this._useProgram(program);
+    gl.uniform1i(out.u.state, 0);
+    gl.uniform1i(out.u.energy, 1);
+    gl.uniform1i(out.u.props, 2);
+    gl.uniform1i(out.u.thermal0, 3);
+    gl.uniform1i(out.u.thermal1, 4);
+    gl.uniform1i(out.u.latent, 5);
+
+    return out;
   }
 
   /**
@@ -201,7 +230,7 @@ export class GpuSim {
   _createGolProgram(frag) {
     const gl = this.gl;
     const program = createProgram(gl, FULLSCREEN_VERT, frag);
-    return {
+    const out = {
       program,
       u: {
         state: mustGetUniform(gl, program, "u_state"),
@@ -214,6 +243,15 @@ export class GpuSim {
         tick: mustGetUniform(gl, program, "u_tick"),
       },
     };
+
+    this._useProgram(program);
+    gl.uniform1i(out.u.state, 0);
+    gl.uniform1i(out.u.energy, 1);
+    gl.uniform1i(out.u.thermal0, 2);
+    gl.uniform1i(out.u.thermal1, 3);
+    gl.uniform1i(out.u.latent, 4);
+
+    return out;
   }
 
   /**
@@ -255,7 +293,7 @@ export class GpuSim {
   _createCaUpdateProgram(frag) {
     const gl = this.gl;
     const program = createProgram(gl, FULLSCREEN_VERT, frag);
-    return {
+    const out = {
       program,
       u: {
         ca: mustGetUniform(gl, program, "u_ca"),
@@ -263,6 +301,11 @@ export class GpuSim {
         rule: mustGetUniform(gl, program, "u_rule"),
       },
     };
+
+    this._useProgram(program);
+    gl.uniform1i(out.u.ca, 0);
+
+    return out;
   }
 
   /**
@@ -272,7 +315,7 @@ export class GpuSim {
   _createCaApplyProgram(frag) {
     const gl = this.gl;
     const program = createProgram(gl, FULLSCREEN_VERT, frag);
-    return {
+    const out = {
       program,
       u: {
         state: mustGetUniform(gl, program, "u_state"),
@@ -288,6 +331,16 @@ export class GpuSim {
         emitPos: mustGetUniform(gl, program, "u_emitPos"),
       },
     };
+
+    this._useProgram(program);
+    gl.uniform1i(out.u.state, 0);
+    gl.uniform1i(out.u.energy, 1);
+    gl.uniform1i(out.u.ca, 2);
+    gl.uniform1i(out.u.thermal0, 3);
+    gl.uniform1i(out.u.thermal1, 4);
+    gl.uniform1i(out.u.latent, 5);
+
+    return out;
   }
 
   _ensureCaBuffers() {
@@ -452,7 +505,7 @@ export class GpuSim {
   _createPaintProgram() {
     const gl = this.gl;
     const program = createProgram(gl, FULLSCREEN_VERT, PAINT_FRAG);
-    return {
+    const out = {
       program,
       u: {
         state: mustGetUniform(gl, program, "u_state"),
@@ -471,6 +524,15 @@ export class GpuSim {
         walls: mustGetUniform(gl, program, "u_walls"),
       },
     };
+
+    this._useProgram(program);
+    gl.uniform1i(out.u.state, 0);
+    gl.uniform1i(out.u.energy, 1);
+    gl.uniform1i(out.u.thermal0, 2);
+    gl.uniform1i(out.u.thermal1, 3);
+    gl.uniform1i(out.u.latent, 4);
+
+    return out;
   }
 
   /**
@@ -479,7 +541,7 @@ export class GpuSim {
   _createStampProgram() {
     const gl = this.gl;
     const program = createProgram(gl, FULLSCREEN_VERT, STAMP_FRAG);
-    return {
+    const out = {
       program,
       u: {
         state: mustGetUniform(gl, program, "u_state"),
@@ -498,6 +560,17 @@ export class GpuSim {
         walls: mustGetUniform(gl, program, "u_walls"),
       },
     };
+
+    this._useProgram(program);
+    gl.uniform1i(out.u.state, 0);
+    gl.uniform1i(out.u.energy, 1);
+    gl.uniform1i(out.u.image, 2);
+    gl.uniform1i(out.u.palette, 3);
+    gl.uniform1i(out.u.thermal0, 4);
+    gl.uniform1i(out.u.thermal1, 5);
+    gl.uniform1i(out.u.latent, 6);
+
+    return out;
   }
 
   /**
@@ -506,7 +579,7 @@ export class GpuSim {
   _createWallsProgram() {
     const gl = this.gl;
     const program = createProgram(gl, FULLSCREEN_VERT, WALLS_FRAG);
-    return {
+    const out = {
       program,
       u: {
         state: mustGetUniform(gl, program, "u_state"),
@@ -519,6 +592,15 @@ export class GpuSim {
         walls: mustGetUniform(gl, program, "u_walls"),
       },
     };
+
+    this._useProgram(program);
+    gl.uniform1i(out.u.state, 0);
+    gl.uniform1i(out.u.energy, 1);
+    gl.uniform1i(out.u.thermal0, 2);
+    gl.uniform1i(out.u.thermal1, 3);
+    gl.uniform1i(out.u.latent, 4);
+
+    return out;
   }
 
   /**
@@ -527,7 +609,7 @@ export class GpuSim {
   _createRenderProgram() {
     const gl = this.gl;
     const program = createProgram(gl, FULLSCREEN_VERT, RENDER_FRAG);
-    return {
+    const out = {
       program,
       u: {
         state: mustGetUniform(gl, program, "u_state"),
@@ -541,6 +623,13 @@ export class GpuSim {
         camZoom: mustGetUniform(gl, program, "u_camZoom"),
       },
     };
+
+    this._useProgram(program);
+    gl.uniform1i(out.u.state, 0);
+    gl.uniform1i(out.u.palette, 1);
+    gl.uniform1i(out.u.energy, 2);
+
+    return out;
   }
 
   /**
@@ -609,26 +698,23 @@ export class GpuSim {
     gl.bindTexture(gl.TEXTURE_2D, null);
 
     const { program, u } = this._clear;
-    gl.useProgram(program);
+    this._useProgram(program);
     gl.uniform2i(u.size, this.width, this.height);
     gl.uniform1ui(u.ambientTemp, this.ambientTemp >>> 0);
     gl.uniform1i(u.walls, this.wallsEnabled ? 1 : 0);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this._thermal0Tex);
-    gl.uniform1i(u.thermal0, 0);
 
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this._thermal1Tex);
-    gl.uniform1i(u.thermal1, 1);
 
     gl.activeTexture(gl.TEXTURE2);
     gl.bindTexture(gl.TEXTURE_2D, this._latentTex);
-    gl.uniform1i(u.latent, 2);
 
     // Clear both ping-pong buffers so pick/paint work consistently right away.
-    this._draw(program, this._worldFb[0], this.width, this.height);
-    this._draw(program, this._worldFb[1], this.width, this.height);
+    this._draw(this._worldFb[0], this.width, this.height);
+    this._draw(this._worldFb[1], this.width, this.height);
     this._front = 0;
     this.tick = 0;
 
@@ -659,32 +745,27 @@ export class GpuSim {
     const gl = this.gl;
     const { program, u } = this._walls;
 
-    gl.useProgram(program);
+    this._useProgram(program);
     gl.uniform2i(u.size, this.width, this.height);
     gl.uniform1ui(u.ambientTemp, this.ambientTemp >>> 0);
     gl.uniform1i(u.walls, this.wallsEnabled ? 1 : 0);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this._srcTex());
-    gl.uniform1i(u.state, 0);
 
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this._srcEnergyTex());
-    gl.uniform1i(u.energy, 1);
 
     gl.activeTexture(gl.TEXTURE2);
     gl.bindTexture(gl.TEXTURE_2D, this._thermal0Tex);
-    gl.uniform1i(u.thermal0, 2);
 
     gl.activeTexture(gl.TEXTURE3);
     gl.bindTexture(gl.TEXTURE_2D, this._thermal1Tex);
-    gl.uniform1i(u.thermal1, 3);
 
     gl.activeTexture(gl.TEXTURE4);
     gl.bindTexture(gl.TEXTURE_2D, this._latentTex);
-    gl.uniform1i(u.latent, 4);
 
-    this._draw(program, this._dstFb(), this.width, this.height);
+    this._draw(this._dstFb(), this.width, this.height);
     this._swap();
   }
 
@@ -733,13 +814,57 @@ export class GpuSim {
    * @param {number} w
    * @param {number} h
    */
-  _draw(program, fb, w, h) {
+  _draw(fb, w, h) {
     const gl = this.gl;
-    gl.useProgram(program);
     gl.bindVertexArray(this._vao);
     gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
     gl.viewport(0, 0, w, h);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  }
+
+  /**
+   * @param {WebGLProgram} program
+   */
+  _useProgram(program) {
+    if (this._activeProgram === program) return;
+    this.gl.useProgram(program);
+    this._activeProgram = program;
+  }
+
+  _beginHeatStep() {
+    const gl = this.gl;
+    const { program, u } = this._heat;
+    this._useProgram(program);
+    gl.uniform2i(u.size, this.width, this.height);
+    gl.uniform1i(u.walls, this.wallsEnabled ? 1 : 0);
+
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, this._propTex);
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, this._thermal0Tex);
+    gl.activeTexture(gl.TEXTURE4);
+    gl.bindTexture(gl.TEXTURE_2D, this._latentTex);
+  }
+
+  _beginMatterStep() {
+    const gl = this.gl;
+    const { program, u } = this._matter;
+    this._useProgram(program);
+    gl.uniform2i(u.size, this.width, this.height);
+    gl.uniform1ui(u.tick, this.tick >>> 0);
+    gl.uniform1ui(u.seed, this.seed >>> 0);
+    gl.uniform1ui(u.ambientTemp, this.ambientTemp >>> 0);
+    gl.uniform1i(u.walls, this.wallsEnabled ? 1 : 0);
+    gl.uniform1i(u.openEdges, this.openEdgesEnabled ? 1 : 0);
+
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, this._propTex);
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, this._thermal0Tex);
+    gl.activeTexture(gl.TEXTURE4);
+    gl.bindTexture(gl.TEXTURE_2D, this._thermal1Tex);
+    gl.activeTexture(gl.TEXTURE5);
+    gl.bindTexture(gl.TEXTURE_2D, this._latentTex);
   }
 
   /**
@@ -751,33 +876,17 @@ export class GpuSim {
     const gl = this.gl;
     const { program, u } = this._heat;
 
-    gl.useProgram(program);
-    gl.uniform2i(u.size, this.width, this.height);
+    this._useProgram(program);
     gl.uniform2i(u.dir, dx, dy);
     gl.uniform1i(u.parity, parity);
-    gl.uniform1i(u.walls, this.wallsEnabled ? 1 : 0);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this._srcTex());
-    gl.uniform1i(u.state, 0);
 
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this._srcEnergyTex());
-    gl.uniform1i(u.energy, 1);
 
-    gl.activeTexture(gl.TEXTURE2);
-    gl.bindTexture(gl.TEXTURE_2D, this._propTex);
-    gl.uniform1i(u.props, 2);
-
-    gl.activeTexture(gl.TEXTURE3);
-    gl.bindTexture(gl.TEXTURE_2D, this._thermal0Tex);
-    gl.uniform1i(u.thermal0, 3);
-
-    gl.activeTexture(gl.TEXTURE4);
-    gl.bindTexture(gl.TEXTURE_2D, this._latentTex);
-    gl.uniform1i(u.latent, 4);
-
-    this._draw(program, this._dstFb(), this.width, this.height);
+    this._draw(this._dstFb(), this.width, this.height);
     this._swap();
   }
 
@@ -793,44 +902,20 @@ export class GpuSim {
     const gl = this.gl;
     const { program, u } = this._matter;
 
-    gl.useProgram(program);
-    gl.uniform2i(u.size, this.width, this.height);
+    this._useProgram(program);
     gl.uniform2i(u.dir, dx, dy);
     gl.uniform1i(u.parity, parity);
-    gl.uniform1ui(u.tick, this.tick >>> 0);
-    gl.uniform1ui(u.seed, this.seed >>> 0);
     gl.uniform1i(u.selfStep, selfStep);
     gl.uniform1i(u.doMove, doMove);
-    gl.uniform1ui(u.ambientTemp, this.ambientTemp >>> 0);
     gl.uniform1ui(u.passSalt, passSalt >>> 0);
-    gl.uniform1i(u.walls, this.wallsEnabled ? 1 : 0);
-    gl.uniform1i(u.openEdges, this.openEdgesEnabled ? 1 : 0);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this._srcTex());
-    gl.uniform1i(u.state, 0);
 
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this._srcEnergyTex());
-    gl.uniform1i(u.energy, 1);
 
-    gl.activeTexture(gl.TEXTURE2);
-    gl.bindTexture(gl.TEXTURE_2D, this._propTex);
-    gl.uniform1i(u.props, 2);
-
-    gl.activeTexture(gl.TEXTURE3);
-    gl.bindTexture(gl.TEXTURE_2D, this._thermal0Tex);
-    gl.uniform1i(u.thermal0, 3);
-
-    gl.activeTexture(gl.TEXTURE4);
-    gl.bindTexture(gl.TEXTURE_2D, this._thermal1Tex);
-    gl.uniform1i(u.thermal1, 4);
-
-    gl.activeTexture(gl.TEXTURE5);
-    gl.bindTexture(gl.TEXTURE_2D, this._latentTex);
-    gl.uniform1i(u.latent, 5);
-
-    this._draw(program, this._dstFb(), this.width, this.height);
+    this._draw(this._dstFb(), this.width, this.height);
     this._swap();
   }
 
@@ -844,16 +929,15 @@ export class GpuSim {
     const gl = this.gl;
     const { program, u } = ca;
 
-    gl.useProgram(program);
+    this._useProgram(program);
     const activeLen = Math.max(0, this._caActiveLen() | 0);
     gl.uniform1i(u.width, activeLen);
     gl.uniform1ui(u.rule, (this.caRule & 255) >>> 0);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, src);
-    gl.uniform1i(u.ca, 0);
 
-    this._draw(program, dst, this._caWidth | 0, 1);
+    this._draw(dst, this._caWidth | 0, 1);
     this._caFront = 1 - this._caFront;
   }
 
@@ -875,7 +959,7 @@ export class GpuSim {
       if (emitPos < 0 || emitPos >= this.width) return;
     }
 
-    gl.useProgram(program);
+    this._useProgram(program);
     gl.uniform2i(u.size, this.width, this.height);
     gl.uniform1ui(u.ambientTemp, this.ambientTemp >>> 0);
     gl.uniform1ui(u.paintId, (this.caPaintId & 255) >>> 0);
@@ -884,29 +968,23 @@ export class GpuSim {
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this._srcTex());
-    gl.uniform1i(u.state, 0);
 
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this._srcEnergyTex());
-    gl.uniform1i(u.energy, 1);
 
     gl.activeTexture(gl.TEXTURE2);
     gl.bindTexture(gl.TEXTURE_2D, caTex);
-    gl.uniform1i(u.ca, 2);
 
     gl.activeTexture(gl.TEXTURE3);
     gl.bindTexture(gl.TEXTURE_2D, this._thermal0Tex);
-    gl.uniform1i(u.thermal0, 3);
 
     gl.activeTexture(gl.TEXTURE4);
     gl.bindTexture(gl.TEXTURE_2D, this._thermal1Tex);
-    gl.uniform1i(u.thermal1, 4);
 
     gl.activeTexture(gl.TEXTURE5);
     gl.bindTexture(gl.TEXTURE_2D, this._latentTex);
-    gl.uniform1i(u.latent, 5);
 
-    this._draw(program, this._dstFb(), this.width, this.height);
+    this._draw(this._dstFb(), this.width, this.height);
     this._swap();
   }
 
@@ -916,32 +994,27 @@ export class GpuSim {
     const gl = this.gl;
     const { program, u } = gol;
 
-    gl.useProgram(program);
+    this._useProgram(program);
     gl.uniform2i(u.size, this.width, this.height);
     gl.uniform1ui(u.seed, this.seed >>> 0);
     gl.uniform1ui(u.tick, this.tick >>> 0);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this._srcTex());
-    gl.uniform1i(u.state, 0);
 
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this._srcEnergyTex());
-    gl.uniform1i(u.energy, 1);
 
     gl.activeTexture(gl.TEXTURE2);
     gl.bindTexture(gl.TEXTURE_2D, this._thermal0Tex);
-    gl.uniform1i(u.thermal0, 2);
 
     gl.activeTexture(gl.TEXTURE3);
     gl.bindTexture(gl.TEXTURE_2D, this._thermal1Tex);
-    gl.uniform1i(u.thermal1, 3);
 
     gl.activeTexture(gl.TEXTURE4);
     gl.bindTexture(gl.TEXTURE_2D, this._latentTex);
-    gl.uniform1i(u.latent, 4);
 
-    this._draw(program, this._dstFb(), this.width, this.height);
+    this._draw(this._dstFb(), this.width, this.height);
     this._swap();
   }
 
@@ -950,37 +1023,35 @@ export class GpuSim {
    */
   step() {
     // Heat diffusion: unbiased 4-pass (horizontal + vertical, both parities).
+    this._beginHeatStep();
     this._heatPass(1, 0, 0);
     this._heatPass(1, 0, 1);
     this._heatPass(0, 1, 0);
     this._heatPass(0, 1, 1);
 
     // Matter passes: gravity (down), then diagonals (order alternates), then horizontal diffusion.
-    const down = [0, -1];
-    const dl = [-1, -1];
-    const dr = [1, -1];
-    const horiz = [1, 0];
+    this._beginMatterStep();
 
     // Single down pass per tick (alternating parity) keeps fall speeds reasonable.
     // The down pass also performs the per-cell "self tick".
     const pY = /** @type {0|1} */ (this.tick & 1);
     // Run a second vertical pass (other parity) with movement disabled so
     // chemistry like ignition works equally in both directions.
-    this._matterPass(down[0], down[1], /** @type {0|1} */ (1 - pY), 0, 0, 8 + pY);
-    this._matterPass(down[0], down[1], pY, 1, 1, 10 + pY);
+    this._matterPass(0, -1, /** @type {0|1} */ (1 - pY), 0, 0, 8 + pY);
+    this._matterPass(0, -1, pY, 1, 1, 10 + pY);
 
-    const diagFirst = (this.tick & 1) === 0 ? dl : dr;
-    const diagSecond = (this.tick & 1) === 0 ? dr : dl;
+    const diagFirstX = (this.tick & 1) === 0 ? -1 : 1;
+    const diagSecondX = -diagFirstX;
 
-    this._matterPass(diagFirst[0], diagFirst[1], 0, 0, 1, 20);
-    this._matterPass(diagFirst[0], diagFirst[1], 1, 0, 1, 21);
-    this._matterPass(diagSecond[0], diagSecond[1], 0, 0, 1, 22);
-    this._matterPass(diagSecond[0], diagSecond[1], 1, 0, 1, 23);
+    this._matterPass(diagFirstX, -1, 0, 0, 1, 20);
+    this._matterPass(diagFirstX, -1, 1, 0, 1, 21);
+    this._matterPass(diagSecondX, -1, 0, 0, 1, 22);
+    this._matterPass(diagSecondX, -1, 1, 0, 1, 23);
 
-    this._matterPass(horiz[0], horiz[1], 0, 0, 1, 30);
-    this._matterPass(horiz[0], horiz[1], 1, 0, 1, 31);
-    this._matterPass(horiz[0], horiz[1], 0, 0, 1, 32);
-    this._matterPass(horiz[0], horiz[1], 1, 0, 1, 33);
+    this._matterPass(1, 0, 0, 0, 1, 30);
+    this._matterPass(1, 0, 1, 0, 1, 31);
+    this._matterPass(1, 0, 0, 0, 1, 32);
+    this._matterPass(1, 0, 1, 0, 1, 33);
 
     if (this.golEnabled && this._gol) {
       const interval = Math.max(1, this.golInterval | 0);
@@ -1043,10 +1114,10 @@ export class GpuSim {
 
     for (let i = 0; i < n * 2; i++) this._paintCenters[i] = centersXY[i] | 0;
 
-    gl.useProgram(program);
+    this._useProgram(program);
     gl.uniform2i(u.size, this.width, this.height);
     gl.uniform1i(u.count, n);
-    gl.uniform2iv(u.centers, this._paintCenters.subarray(0, n * 2));
+    gl.uniform2iv(u.centers, this._paintCenters, 0, n * 2);
     gl.uniform1i(u.radius, radius | 0);
     gl.uniform4ui(u.paint, cell.id >>> 0, clampByte(cell.temp) >>> 0, clampByte(cell.data) >>> 0, clampByte(cell.flags) >>> 0);
     gl.uniform1i(u.addMode, addMode ? 1 : 0);
@@ -1056,25 +1127,20 @@ export class GpuSim {
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this._srcTex());
-    gl.uniform1i(u.state, 0);
 
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this._srcEnergyTex());
-    gl.uniform1i(u.energy, 1);
 
     gl.activeTexture(gl.TEXTURE2);
     gl.bindTexture(gl.TEXTURE_2D, this._thermal0Tex);
-    gl.uniform1i(u.thermal0, 2);
 
     gl.activeTexture(gl.TEXTURE3);
     gl.bindTexture(gl.TEXTURE_2D, this._thermal1Tex);
-    gl.uniform1i(u.thermal1, 3);
 
     gl.activeTexture(gl.TEXTURE4);
     gl.bindTexture(gl.TEXTURE_2D, this._latentTex);
-    gl.uniform1i(u.latent, 4);
 
-    this._draw(program, this._dstFb(), this.width, this.height);
+    this._draw(this._dstFb(), this.width, this.height);
     this._swap();
   }
 
@@ -1105,7 +1171,7 @@ export class GpuSim {
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
 
     const { program, u } = this._stamp;
-    gl.useProgram(program);
+    this._useProgram(program);
     gl.uniform2i(u.size, this.width, this.height);
     gl.uniform2i(u.imgSize, this._imgSize.width, this._imgSize.height);
     gl.uniform2i(u.origin, originX | 0, originY | 0);
@@ -1116,33 +1182,26 @@ export class GpuSim {
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this._srcTex());
-    gl.uniform1i(u.state, 0);
 
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this._srcEnergyTex());
-    gl.uniform1i(u.energy, 1);
 
     gl.activeTexture(gl.TEXTURE2);
     gl.bindTexture(gl.TEXTURE_2D, this._imgTex);
-    gl.uniform1i(u.image, 2);
 
     gl.activeTexture(gl.TEXTURE3);
     gl.bindTexture(gl.TEXTURE_2D, this._paletteTex);
-    gl.uniform1i(u.palette, 3);
 
     gl.activeTexture(gl.TEXTURE4);
     gl.bindTexture(gl.TEXTURE_2D, this._thermal0Tex);
-    gl.uniform1i(u.thermal0, 4);
 
     gl.activeTexture(gl.TEXTURE5);
     gl.bindTexture(gl.TEXTURE_2D, this._thermal1Tex);
-    gl.uniform1i(u.thermal1, 5);
 
     gl.activeTexture(gl.TEXTURE6);
     gl.bindTexture(gl.TEXTURE_2D, this._latentTex);
-    gl.uniform1i(u.latent, 6);
 
-    this._draw(program, this._dstFb(), this.width, this.height);
+    this._draw(this._dstFb(), this.width, this.height);
     this._swap();
   }
 
@@ -1202,10 +1261,7 @@ export class GpuSim {
   render() {
     const gl = this.gl;
     const { program, u } = this._render;
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
-
-    gl.useProgram(program);
+    this._useProgram(program);
     gl.uniform2i(u.size, this.width, this.height);
     gl.uniform1i(u.viewMode, this.viewMode === "temperature" ? 1 : this.viewMode === "wind" ? 2 : 0);
     gl.uniform1i(u.reliefMode, this.reliefMode === "dunes" ? 2 : this.reliefMode === "edges" ? 1 : 0);
@@ -1215,16 +1271,13 @@ export class GpuSim {
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this._srcTex());
-    gl.uniform1i(u.state, 0);
 
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this._paletteTex);
-    gl.uniform1i(u.palette, 1);
 
     gl.activeTexture(gl.TEXTURE2);
     gl.bindTexture(gl.TEXTURE_2D, this._srcEnergyTex());
-    gl.uniform1i(u.energy, 2);
 
-    this._draw(program, null, this.canvas.width, this.canvas.height);
+    this._draw(null, this.canvas.width, this.canvas.height);
   }
 }

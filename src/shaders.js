@@ -101,8 +101,9 @@ uint tempFromEnergy(uint id, uint e) {
   uint c = max(1u, th0.r);
   uint tm = th0.g;
   uint tb = th0.b;
-  uint lf = latentFusion(id);
-  uint lv = latentVapor(id);
+  uvec4 lt = texelFetch(u_latent, ivec2(int(id), 0), 0);
+  uint lf = unpackU16(lt.rg);
+  uint lv = unpackU16(lt.ba);
 
   uint eSolidMax = c * tm;
   if (e < eSolidMax) return min(255u, e / c);
@@ -240,8 +241,9 @@ uint latentVapor(uint id) {
 uint energyForTemp(uint id, uint temp) {
   uvec4 th0 = loadThermal0(id);
   uint c = max(1u, th0.r);
-  uint lf = latentFusion(id);
-  uint lv = latentVapor(id);
+  uvec4 lt = texelFetch(u_latent, ivec2(int(id), 0), 0);
+  uint lf = unpackU16(lt.rg);
+  uint lv = unpackU16(lt.ba);
   uvec4 ph = loadThermal1(id);
   uint solidId = ph.r;
   uint liquidId = ph.g;
@@ -311,8 +313,9 @@ uint latentVapor(uint id) {
 uint energyForTemp(uint id, uint temp) {
   uvec4 th0 = loadThermal0(id);
   uint c = max(1u, th0.r);
-  uint lf = latentFusion(id);
-  uint lv = latentVapor(id);
+  uvec4 lt = texelFetch(u_latent, ivec2(int(id), 0), 0);
+  uint lf = unpackU16(lt.rg);
+  uint lv = unpackU16(lt.ba);
   uvec4 ph = loadThermal1(id);
   uint solidId = ph.r;
   uint liquidId = ph.g;
@@ -393,6 +396,13 @@ const uint P_WIRE = 16u;
 	const uint P_BATTERY = 18u;
 	const uint P_BOT = 19u;
 	const uint P_GLIDER = 20u;
+	const uint P_CIRCUIT_WIRE = 21u;
+	const uint P_CIRCUIT_POWER = 22u;
+	const uint P_CIRCUIT_LAMP = 23u;
+	const uint P_CIRCUIT_NOT_N = 24u;
+	const uint P_CIRCUIT_NOT_E = 25u;
+	const uint P_CIRCUIT_NOT_S = 26u;
+	const uint P_CIRCUIT_NOT_W = 27u;
 
 	const uint FLAG_IMMOVABLE = 1u << 0u;
 const uint FLAG_POWDER = 1u << 1u;
@@ -473,8 +483,9 @@ uint heatCapacity(uint id) {
 uint energyForTemp(uint id, uint temp) {
   uvec4 th0 = loadThermal0(id);
   uint c = max(1u, th0.r);
-  uint lf = latentFusion(id);
-  uint lv = latentVapor(id);
+  uvec4 lt = texelFetch(u_latent, ivec2(int(id), 0), 0);
+  uint lf = unpackU16(lt.rg);
+  uint lv = unpackU16(lt.ba);
   uvec4 ph = loadThermal1(id);
   uint solidId = ph.r;
   uint liquidId = ph.g;
@@ -490,8 +501,9 @@ uint tempFromEnergy(uint id, uint e) {
   uint c = max(1u, th0.r);
   uint tm = th0.g;
   uint tb = th0.b;
-  uint lf = latentFusion(id);
-  uint lv = latentVapor(id);
+  uvec4 lt = texelFetch(u_latent, ivec2(int(id), 0), 0);
+  uint lf = unpackU16(lt.rg);
+  uint lv = unpackU16(lt.ba);
 
   uint eSolidMax = c * tm;
   if (e < eSolidMax) return min(255u, e / c);
@@ -512,8 +524,9 @@ void applyPhase(inout uvec4 s, inout uint e) {
   uint c = max(1u, th0.r);
   uint tm = th0.g;
   uint tb = th0.b;
-  uint lf = latentFusion(id);
-  uint lv = latentVapor(id);
+  uvec4 lt = texelFetch(u_latent, ivec2(int(id), 0), 0);
+  uint lf = unpackU16(lt.rg);
+  uint lv = unpackU16(lt.ba);
   uvec4 ph = loadThermal1(id);
   uint solidId = ph.r;
   uint liquidId = ph.g;
@@ -741,6 +754,8 @@ void agentPaintCell(uint paintId, out uint id, out uint temp, out uint data, out
   else if (id == P_BATTERY) { data = 255u; }
   else if (id == P_BOT) { meta = 148u; }
   else if (id == P_GLIDER) { meta = 148u; }
+  else if (id == P_CIRCUIT_POWER) { data = 15u; }
+  else if (id == P_CIRCUIT_NOT_N || id == P_CIRCUIT_NOT_E || id == P_CIRCUIT_NOT_S || id == P_CIRCUIT_NOT_W) { data = 15u; }
 
   e = energyForTemp(id, temp);
 }
@@ -935,6 +950,75 @@ void tryPlantGrow(
 uvec4 setId(uvec4 s, uint id) {
   s.r = id;
   return s;
+}
+
+uint circuitClamp15(uint p) {
+  return min(15u, p);
+}
+
+bool circuitIsInverter(uint id) {
+  return (id == P_CIRCUIT_NOT_N) || (id == P_CIRCUIT_NOT_E) || (id == P_CIRCUIT_NOT_S) || (id == P_CIRCUIT_NOT_W);
+}
+
+ivec2 circuitInverterOutDelta(uint id) {
+  if (id == P_CIRCUIT_NOT_N) return ivec2(0, 1);
+  if (id == P_CIRCUIT_NOT_E) return ivec2(1, 0);
+  if (id == P_CIRCUIT_NOT_S) return ivec2(0, -1);
+  return ivec2(-1, 0);
+}
+
+bool circuitInverterOutputsToward(uint inverterId, ivec2 deltaFromInverterToTarget) {
+  return deltaFromInverterToTarget == circuitInverterOutDelta(inverterId);
+}
+
+uint circuitPowerFromNeighborToWire(ivec2 deltaToNeighbor, uvec4 n) {
+  uint nid = n.r;
+  uint ndata = circuitClamp15(n.b);
+  if (nid == P_CIRCUIT_POWER) return 15u;
+  if (nid == P_CIRCUIT_WIRE) return (ndata > 0u) ? (ndata - 1u) : 0u;
+  if (circuitIsInverter(nid) && circuitInverterOutputsToward(nid, -deltaToNeighbor)) return ndata;
+  return 0u;
+}
+
+uint circuitPowerFromNeighborToInput(ivec2 deltaToNeighbor, uvec4 n) {
+  uint nid = n.r;
+  uint ndata = circuitClamp15(n.b);
+  if (nid == P_CIRCUIT_POWER) return 15u;
+  if (nid == P_CIRCUIT_WIRE) return ndata;
+  if (circuitIsInverter(nid) && circuitInverterOutputsToward(nid, -deltaToNeighbor)) return ndata;
+  return 0u;
+}
+
+uint circuitMaxWireInputPower(ivec2 c) {
+  uint p = 0u;
+  ivec2 n;
+
+  n = c + ivec2(1, 0);
+  if (inBounds(n)) p = max(p, circuitPowerFromNeighborToWire(ivec2(1, 0), loadState(n)));
+  n = c + ivec2(-1, 0);
+  if (inBounds(n)) p = max(p, circuitPowerFromNeighborToWire(ivec2(-1, 0), loadState(n)));
+  n = c + ivec2(0, 1);
+  if (inBounds(n)) p = max(p, circuitPowerFromNeighborToWire(ivec2(0, 1), loadState(n)));
+  n = c + ivec2(0, -1);
+  if (inBounds(n)) p = max(p, circuitPowerFromNeighborToWire(ivec2(0, -1), loadState(n)));
+
+  return circuitClamp15(p);
+}
+
+uint circuitMaxInputPower(ivec2 c) {
+  uint p = 0u;
+  ivec2 n;
+
+  n = c + ivec2(1, 0);
+  if (inBounds(n)) p = max(p, circuitPowerFromNeighborToInput(ivec2(1, 0), loadState(n)));
+  n = c + ivec2(-1, 0);
+  if (inBounds(n)) p = max(p, circuitPowerFromNeighborToInput(ivec2(-1, 0), loadState(n)));
+  n = c + ivec2(0, 1);
+  if (inBounds(n)) p = max(p, circuitPowerFromNeighborToInput(ivec2(0, 1), loadState(n)));
+  n = c + ivec2(0, -1);
+  if (inBounds(n)) p = max(p, circuitPowerFromNeighborToInput(ivec2(0, -1), loadState(n)));
+
+  return circuitClamp15(p);
 }
 
 void selfUpdate(ivec2 c, inout uvec4 s, inout uint e, uint salt) {
@@ -1290,6 +1374,24 @@ void selfUpdate(ivec2 c, inout uvec4 s, inout uint e, uint salt) {
     // Wire charge (data) decays, and arc cooldown (meta) counts down.
     if (data > 0u) data -= 1u;
     if (meta > 0u) meta -= 1u;
+  } else if (id == P_CIRCUIT_POWER) {
+    data = 15u;
+    meta = 0u;
+  } else if (id == P_CIRCUIT_WIRE) {
+    data = circuitMaxWireInputPower(c);
+    meta = 0u;
+  } else if (id == P_CIRCUIT_LAMP) {
+    uint inP = circuitMaxInputPower(c);
+    data = (inP > 0u) ? 15u : 0u;
+    meta = 0u;
+  } else if (circuitIsInverter(id)) {
+    ivec2 outD = circuitInverterOutDelta(id);
+    ivec2 inD = -outD;
+    uint inP = 0u;
+    ivec2 n = c + inD;
+    if (inBounds(n)) inP = circuitPowerFromNeighborToInput(inD, loadState(n));
+    data = (inP > 0u) ? 0u : 15u;
+    meta = 0u;
   }
 
   // Open top boundary: gases/energy vent out of the world.
@@ -2205,8 +2307,9 @@ uint latentVapor(uint id) {
 uint energyForTemp(uint id, uint temp) {
   uvec4 th0 = loadThermal0(id);
   uint c = max(1u, th0.r);
-  uint lf = latentFusion(id);
-  uint lv = latentVapor(id);
+  uvec4 lt = texelFetch(u_latent, ivec2(int(id), 0), 0);
+  uint lf = unpackU16(lt.rg);
+  uint lv = unpackU16(lt.ba);
   uvec4 ph = loadThermal1(id);
   uint solidId = ph.r;
   uint liquidId = ph.g;
@@ -2429,6 +2532,13 @@ const uint P_SPARK = 17u;
 const uint P_BATTERY = 18u;
 const uint P_BOT = 19u;
 const uint P_GLIDER = 20u;
+const uint P_CIRCUIT_WIRE = 21u;
+const uint P_CIRCUIT_POWER = 22u;
+const uint P_CIRCUIT_LAMP = 23u;
+const uint P_CIRCUIT_NOT_N = 24u;
+const uint P_CIRCUIT_NOT_E = 25u;
+const uint P_CIRCUIT_NOT_S = 26u;
+const uint P_CIRCUIT_NOT_W = 27u;
 
 uvec4 loadState(ivec2 c) {
   return texelFetch(u_state, c, 0);
@@ -2463,8 +2573,9 @@ uint latentVapor(uint id) {
 uint energyForTemp(uint id, uint temp) {
   uvec4 th0 = loadThermal0(id);
   uint c = max(1u, th0.r);
-  uint lf = latentFusion(id);
-  uint lv = latentVapor(id);
+  uvec4 lt = texelFetch(u_latent, ivec2(int(id), 0), 0);
+  uint lf = unpackU16(lt.rg);
+  uint lv = unpackU16(lt.ba);
   uvec4 ph = loadThermal1(id);
   uint solidId = ph.r;
   uint liquidId = ph.g;
@@ -2500,6 +2611,8 @@ uvec4 makeCell(uint id) {
   else if (id == P_BATTERY) { data = 255u; }
   else if (id == P_BOT) { data = 0u; meta = 148u; }
   else if (id == P_GLIDER) { data = 0u; meta = 148u; }
+  else if (id == P_CIRCUIT_POWER) { data = 15u; }
+  else if (id == P_CIRCUIT_NOT_N || id == P_CIRCUIT_NOT_E || id == P_CIRCUIT_NOT_S || id == P_CIRCUIT_NOT_W) { data = 15u; }
   return uvec4(id, temp, data, meta);
 }
 
@@ -2668,6 +2781,13 @@ uniform float u_camZoom;
 out vec4 outColor;
 
 const uint P_EMPTY = 0u;
+const uint P_CIRCUIT_WIRE = 21u;
+const uint P_CIRCUIT_POWER = 22u;
+const uint P_CIRCUIT_LAMP = 23u;
+const uint P_CIRCUIT_NOT_N = 24u;
+const uint P_CIRCUIT_NOT_E = 25u;
+const uint P_CIRCUIT_NOT_S = 26u;
+const uint P_CIRCUIT_NOT_W = 27u;
 const float TAU = 6.28318530718;
 
 vec3 hsv2rgb(vec3 c) {
@@ -2706,7 +2826,7 @@ vec3 temperatureColor(float t) {
   return c;
 }
 
-vec3 shadeMaterial(uint id, uint temp) {
+vec3 shadeMaterial(uint id, uint temp, uint data) {
   vec3 base = texelFetch(u_palette, ivec2(int(id), 0), 0).rgb;
   float heat = (float(temp) - float(u_ambientTemp)) / 128.0; // ~[-1..1]
   vec3 warm = vec3(1.0, 0.45, 0.15);
@@ -2714,6 +2834,32 @@ vec3 shadeMaterial(uint id, uint temp) {
   vec3 shaded = base;
   shaded = mix(shaded, warm, clamp(heat, 0.0, 1.0) * 0.35);
   shaded = mix(shaded, cool, clamp(-heat, 0.0, 1.0) * 0.25);
+
+  if (
+    id == P_CIRCUIT_WIRE ||
+    id == P_CIRCUIT_POWER ||
+    id == P_CIRCUIT_LAMP ||
+    id == P_CIRCUIT_NOT_N ||
+    id == P_CIRCUIT_NOT_E ||
+    id == P_CIRCUIT_NOT_S ||
+    id == P_CIRCUIT_NOT_W
+  ) {
+    float p = clamp(float(data & 15u) / 15.0, 0.0, 1.0);
+    if (id == P_CIRCUIT_WIRE) {
+      vec3 glow = vec3(1.0, 0.18, 0.10);
+      shaded = mix(shaded, glow, 0.75 * p);
+    } else if (id == P_CIRCUIT_POWER) {
+      vec3 glow = vec3(1.0, 0.25, 0.12);
+      shaded = mix(shaded, glow, 0.85);
+    } else if (id == P_CIRCUIT_LAMP) {
+      vec3 on = vec3(1.0, 0.95, 0.70);
+      shaded = mix(shaded, on, 0.85 * smoothstep(0.0, 1.0, p));
+    } else {
+      vec3 glow = vec3(1.0, 0.62, 0.10);
+      shaded = mix(shaded, glow, 0.65 * p);
+    }
+  }
+
   return shaded;
 }
 
@@ -2840,24 +2986,24 @@ void main() {
   float wsum = 0.0;
 
   if (a.r != P_EMPTY) {
-    sum += shadeMaterial(a.r, a.g);
+    sum += shadeMaterial(a.r, a.g, a.b);
     wsum += 1.0;
   }
   if (b.r != P_EMPTY) {
-    sum += shadeMaterial(b.r, b.g);
+    sum += shadeMaterial(b.r, b.g, b.b);
     wsum += 1.0;
   }
   if (c.r != P_EMPTY) {
-    sum += shadeMaterial(c.r, c.g);
+    sum += shadeMaterial(c.r, c.g, c.b);
     wsum += 1.0;
   }
   if (d.r != P_EMPTY) {
-    sum += shadeMaterial(d.r, d.g);
+    sum += shadeMaterial(d.r, d.g, d.b);
     wsum += 1.0;
   }
 
   if (wsum <= 0.0) {
-    outColor = vec4(shadeMaterial(P_EMPTY, a.g), 1.0);
+    outColor = vec4(shadeMaterial(P_EMPTY, a.g, a.b), 1.0);
   } else {
     float h00 = massFromId(a.r);
     float h10 = massFromId(b.r);

@@ -1396,13 +1396,14 @@ function setActiveLevel(levelId) {
   remainingBudget = typeof next.budget === "number" ? next.budget : null;
 
   const isSandbox = next.id === LEVEL_ID.SANDBOX;
+  const canPickParticles = isSandbox || next.id === LEVEL_ID.CIRCUIT_LAB;
 
   levelSelect.value = next.id;
-  particleSelect.disabled = !isSandbox;
+  particleSelect.disabled = !canPickParticles;
   for (const el of particleHotbar.querySelectorAll("button")) {
-    if (el instanceof HTMLButtonElement) el.disabled = !isSandbox;
+    if (el instanceof HTMLButtonElement) el.disabled = !canPickParticles;
   }
-  particleMoreBtn.disabled = !isSandbox;
+  particleMoreBtn.disabled = !canPickParticles;
   toolStampBtn.disabled = !isSandbox;
   toolCopyBtn.disabled = !isSandbox;
   resSelect.disabled = !isSandbox;
@@ -1917,10 +1918,14 @@ window.addEventListener("keydown", (e) => {
     w: Particle.WIRE,
     e: Particle.SPARK,
     v: Particle.BATTERY,
+    r: Particle.CIRCUIT_WIRE,
+    p: Particle.CIRCUIT_POWER,
+    l: Particle.CIRCUIT_LAMP,
+    n: Particle.CIRCUIT_NOT_E,
   };
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
   if (k in hotkeys) {
-    if (activeLevel.id !== LEVEL_ID.SANDBOX) return;
+    if (activeLevel.id !== LEVEL_ID.SANDBOX && activeLevel.id !== LEVEL_ID.CIRCUIT_LAB) return;
     setSelectedParticle(hotkeys[k]);
   }
 });
