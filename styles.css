@@ -702,6 +702,15 @@ select {
   padding: 0 2px;
 }
 
+.hotbar__tag {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  margin-right: 6px;
+  user-select: none;
+}
+
 .stampControls {
   display: inline-flex;
   align-items: center;

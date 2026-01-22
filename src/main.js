@@ -93,6 +93,8 @@ const agentPaintControl = /** @type {HTMLElement} */ (document.getElementById("a
 const agentPaintSelect = /** @type {HTMLSelectElement} */ (document.getElementById("agentPaintSelect"));
 const agentDirControl = /** @type {HTMLElement} */ (document.getElementById("agentDirControl"));
 const agentDirSelect = /** @type {HTMLSelectElement} */ (document.getElementById("agentDirSelect"));
+const singlePaintControl = /** @type {HTMLElement} */ (document.getElementById("singlePaintControl"));
+const singlePaint = /** @type {HTMLInputElement} */ (document.getElementById("singlePaint"));
 const brushSize = /** @type {HTMLInputElement} */ (document.getElementById("brushSize"));
 const rateMode = /** @type {HTMLSelectElement} */ (document.getElementById("rateMode"));
 const simRateLabel = /** @type {HTMLSpanElement} */ (document.getElementById("simRateLabel"));
@@ -720,6 +722,7 @@ function refreshToolbarVisibility() {
   stampControls.hidden = !isStamp;
   agentPaintControl.hidden = isStamp || !isAgent;
   agentDirControl.hidden = isStamp || !isAgent;
+  singlePaintControl.hidden = isStamp;
   if (pasteEdgeStoneWrap) pasteEdgeStoneWrap.hidden = !isStamp;
 }
 
@@ -1763,6 +1766,10 @@ function loop(now) {
 
   // Brush gets applied in the animation loop so we don't thrash GPU from event handlers.
   if (brush.down) {
+    if (cursor.has) {
+      brush.x = cursor.x;
+      brush.y = cursor.y;
+    }
     const x0 = brush.lastX;
     const y0 = brush.lastY;
     const x1 = brush.x;
@@ -1783,6 +1790,7 @@ function loop(now) {
     forEachLinePoint(x0, y0, x1, y1, (x, y) => paintAt(x, y, brush.mode, agentDir));
     brush.lastX = x1;
     brush.lastY = y1;
+    if (singlePaint.checked) brush.down = false;
   }
 
   const fpsDtMs = clamp(dtMsRaw, 1, 2000);
