@@ -114,8 +114,8 @@ uvec4 makeCell(uint id, uint temp) {
   else if (id == P_PLANT) { data = 120u; meta = 32u; }
   else if (id == P_BRINE) { data = 120u; }
   else if (id == P_BATTERY) { data = 255u; }
-  else if (id == P_BOT) { meta = 136u; }
-  else if (id == P_GLIDER) { meta = 136u; }
+  else if (id == P_BOT) { meta = 148u; }
+  else if (id == P_GLIDER) { meta = 148u; }
   // Temperature defaults are neighbor-driven for GoL; keep special-case temps only for lava/fire/smoke/steam/ice/spark.
   if (id == P_LAVA) temp = 250u;
   else if (id == P_FIRE) { temp = max(temp, 245u); data = max(data, 80u); meta = max(meta, 10u); }
@@ -210,4 +210,3 @@ void main() {
   outEnergy = curE;
 }
 `;
-

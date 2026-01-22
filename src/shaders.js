@@ -512,27 +512,41 @@ uint packPlantMeta(uint dir, uint gene, uint cd) {
 }
 
 // Agent meta layout (state.a):
-// - bits 0..1: dir (0=right,1=up,2=left,3=down)
-// - bit 2: drill (0=normal, 1=drill through anything)
-// - bit 3: movedParity (u_tick&1 of last move)
-// - bit 4: hand (0=prefer clockwise turns, 1=prefer counter-clockwise turns)
-// - bits 5..6: cooldown (0..3)
+// - bits 0..3: dir16 (0=up,2=up-right,...; odd values are in-between angles that dither between the adjacent 8 directions)
+// - bit 4: movedParity (u_tick&1 of last move)
+// - bit 5: drill (0=normal, 1=drill through anything)
+// - bit 6: cooldown (0..1)
 // - bit 7: version marker (always 1 for the current layout)
-uint packBotMeta(uint dir, uint drill, uint movedParity, uint hand, uint cd) {
-  return 128u | (dir & 3u) | ((drill & 1u) << 2u) | ((movedParity & 1u) << 3u) | ((hand & 1u) << 4u) | ((cd & 3u) << 5u);
+uint packBotMeta(uint dir16, uint drill, uint movedParity, uint cd) {
+  return 128u | (dir16 & 15u) | ((movedParity & 1u) << 4u) | ((drill & 1u) << 5u) | ((cd & 1u) << 6u);
 }
 
-uint botDir(uint meta) { return meta & 3u; }
-uint botDrill(uint meta) { return (meta >> 2u) & 1u; }
-uint botMovedParity(uint meta) { return (meta >> 3u) & 1u; }
-uint botHand(uint meta) { return (meta >> 4u) & 1u; }
-uint botCd(uint meta) { return (meta >> 5u) & 3u; }
+uint botDir(uint meta) { return meta & 15u; }
+uint botMovedParity(uint meta) { return (meta >> 4u) & 1u; }
+uint botDrill(uint meta) { return (meta >> 5u) & 1u; }
+uint botCd(uint meta) { return (meta >> 6u) & 1u; }
 
-ivec2 botDirVec(uint dir) {
-  if (dir == 0u) return ivec2(1, 0);
-  if (dir == 1u) return ivec2(0, 1);
-  if (dir == 2u) return ivec2(-1, 0);
-  return ivec2(0, -1);
+ivec2 botDir8Vec(uint dir8) {
+  if (dir8 == 0u) return ivec2(0, 1);
+  if (dir8 == 1u) return ivec2(1, 1);
+  if (dir8 == 2u) return ivec2(1, 0);
+  if (dir8 == 3u) return ivec2(1, -1);
+  if (dir8 == 4u) return ivec2(0, -1);
+  if (dir8 == 5u) return ivec2(-1, -1);
+  if (dir8 == 6u) return ivec2(-1, 0);
+  return ivec2(-1, 1);
+}
+
+uint botBaseDir8(uint dir16) {
+  return (dir16 >> 1u) & 7u;
+}
+
+uint botStepDir8(ivec2 c, uint dir16) {
+  uint base = botBaseDir8(dir16);
+  if ((dir16 & 1u) == 0u) return base;
+  uint next = (base + 1u) & 7u;
+  uint t = (u_tick + uint(c.x) + uint(c.y)) & 1u;
+  return t == 0u ? base : next;
 }
 
 bool botPassable(uint id) {
@@ -541,10 +555,17 @@ bool botPassable(uint id) {
   return hasFlag(f, FLAG_GAS) || hasFlag(f, FLAG_ENERGY);
 }
 
-bool botCanMove(ivec2 c, uint dir) {
-  ivec2 n = c + botDirVec(dir);
+bool botCanMoveDir8(ivec2 c, uint dir8) {
+  ivec2 n = c + botDir8Vec(dir8);
   if (!inBounds(n)) return false;
   return botPassable(loadState(n).r);
+}
+
+bool botCanMove(ivec2 c, uint dir16) {
+  uint base = botBaseDir8(dir16);
+  if ((dir16 & 1u) == 0u) return botCanMoveDir8(c, base);
+  uint next = (base + 1u) & 7u;
+  return botCanMoveDir8(c, base) || botCanMoveDir8(c, next);
 }
 
 void agentPaintCell(uint paintId, out uint id, out uint temp, out uint data, out uint meta, out uint e) {
@@ -564,8 +585,8 @@ void agentPaintCell(uint paintId, out uint id, out uint temp, out uint data, out
   else if (id == P_BRINE) { data = 120u; }
   else if (id == P_SPARK) { temp = 245u; data = 18u; }
   else if (id == P_BATTERY) { data = 255u; }
-  else if (id == P_BOT) { meta = 136u; }
-  else if (id == P_GLIDER) { meta = 136u; }
+  else if (id == P_BOT) { meta = 148u; }
+  else if (id == P_GLIDER) { meta = 148u; }
 
   e = energyForTemp(id, temp);
 }
@@ -998,7 +1019,6 @@ void selfUpdate(ivec2 c, inout uvec4 s, inout uint e, uint salt) {
     uint dir = 0u;
     uint drill = 0u;
     uint movedParity = 0u;
-    uint hand = 0u;
     uint cd = 0u;
 
     if ((meta & 128u) == 0u) {
@@ -1007,34 +1027,32 @@ void selfUpdate(ivec2 c, inout uvec4 s, inout uint e, uint salt) {
       uint oldDir = meta & 1u;
       movedParity = (meta >> 2u) & 1u;
       cd = (meta >> 3u) & 3u;
-      dir = (oldDir == 0u) ? 0u : 2u;
-      hand = 0u;
+      dir = (oldDir == 0u) ? 4u : 12u;
       drill = 0u;
     } else {
       dir = botDir(meta);
       drill = botDrill(meta);
       movedParity = botMovedParity(meta);
-      hand = botHand(meta);
       cd = botCd(meta);
     }
     if (cd > 0u) cd -= 1u;
 
     bool blocked = (drill == 0u) && !botCanMove(c, dir);
     if (blocked && cd == 0u) {
-      uint cw = (dir + 3u) & 3u;
-      uint ccw = (dir + 1u) & 3u;
-      uint pref = (hand == 0u) ? cw : ccw;
-      uint alt = (hand == 0u) ? ccw : cw;
-      uint back = dir ^ 2u;
+      uint cw = (dir + 1u) & 15u;
+      uint ccw = (dir + 15u) & 15u;
+      uint pref = cw;
+      uint alt = ccw;
+      uint back = (dir + 8u) & 15u;
 
       if (botCanMove(c, pref)) dir = pref;
       else if (botCanMove(c, alt)) dir = alt;
       else dir = back;
 
-      cd = 2u;
+      cd = 1u;
     }
 
-    meta = packBotMeta(dir, drill, movedParity, hand, cd);
+    meta = packBotMeta(dir, drill, movedParity, cd);
   } else if (id == P_ACID) {
     // Acid slowly loses strength.
     if (data > 0u && (randByte(uvec2(c), salt) < 6u)) data -= 1u;
@@ -1498,98 +1516,193 @@ void main() {
   uint tickParity = u_tick & 1u;
   if (u_dir.y == 0 && u_dir.x != 0) {
     // Horizontal pass: aC is left of bC.
-    if (aId == P_BOT && botDir(aMeta) == 0u && botMovedParity(aMeta) != tickParity && (botPassable(bId) || (botDrill(aMeta) != 0u))) {
+    uint aDir16 = botDir(aMeta);
+    uint bDir16 = botDir(bMeta);
+    if (aId == P_BOT && botStepDir8(aC, aDir16) == 2u && botMovedParity(aMeta) != tickParity && (botPassable(bId) || (botDrill(aMeta) != 0u))) {
       uint paintId = aData;
-      uint hand = botHand(aMeta);
       uint cd = botCd(aMeta);
       bId = P_BOT;
       bData = aData;
-      bMeta = packBotMeta(0u, botDrill(aMeta), tickParity, hand, cd);
+      bMeta = packBotMeta(aDir16, botDrill(aMeta), tickParity, cd);
       bE = aE;
       bTemp = aTemp;
       agentPaintCell(paintId, aId, aTemp, aData, aMeta, aE);
-    } else if (bId == P_BOT && botDir(bMeta) == 2u && botMovedParity(bMeta) != tickParity && (botPassable(aId) || (botDrill(bMeta) != 0u))) {
+    } else if (bId == P_BOT && botStepDir8(bC, bDir16) == 6u && botMovedParity(bMeta) != tickParity && (botPassable(aId) || (botDrill(bMeta) != 0u))) {
       uint paintId = bData;
-      uint hand = botHand(bMeta);
       uint cd = botCd(bMeta);
       aId = P_BOT;
       aData = bData;
-      aMeta = packBotMeta(2u, botDrill(bMeta), tickParity, hand, cd);
+      aMeta = packBotMeta(bDir16, botDrill(bMeta), tickParity, cd);
       aE = bE;
       aTemp = bTemp;
       agentPaintCell(paintId, bId, bTemp, bData, bMeta, bE);
     }
   } else if (u_dir.x == 0 && u_dir.y != 0) {
     // Vertical pass (down pairs): aC is above bC (u_dir = (0,-1)).
-    if (aId == P_BOT && botDir(aMeta) == 3u && botMovedParity(aMeta) != tickParity && (botPassable(bId) || (botDrill(aMeta) != 0u))) {
+    uint aDir16 = botDir(aMeta);
+    uint bDir16 = botDir(bMeta);
+    if (aId == P_BOT && botStepDir8(aC, aDir16) == 4u && botMovedParity(aMeta) != tickParity && (botPassable(bId) || (botDrill(aMeta) != 0u))) {
       uint paintId = aData;
-      uint hand = botHand(aMeta);
       uint cd = botCd(aMeta);
       bId = P_BOT;
       bData = aData;
-      bMeta = packBotMeta(3u, botDrill(aMeta), tickParity, hand, cd);
+      bMeta = packBotMeta(aDir16, botDrill(aMeta), tickParity, cd);
       bE = aE;
       bTemp = aTemp;
       agentPaintCell(paintId, aId, aTemp, aData, aMeta, aE);
-    } else if (bId == P_BOT && botDir(bMeta) == 1u && botMovedParity(bMeta) != tickParity && (botPassable(aId) || (botDrill(bMeta) != 0u))) {
+    } else if (bId == P_BOT && botStepDir8(bC, bDir16) == 0u && botMovedParity(bMeta) != tickParity && (botPassable(aId) || (botDrill(bMeta) != 0u))) {
       uint paintId = bData;
-      uint hand = botHand(bMeta);
       uint cd = botCd(bMeta);
       aId = P_BOT;
       aData = bData;
-      aMeta = packBotMeta(1u, botDrill(bMeta), tickParity, hand, cd);
+      aMeta = packBotMeta(bDir16, botDrill(bMeta), tickParity, cd);
       aE = bE;
       aTemp = bTemp;
       agentPaintCell(paintId, bId, bTemp, bData, bMeta, bE);
+    }
+  } else if (abs(u_dir.x) == 1 && u_dir.y == -1) {
+    // Diagonal pass: u_dir is either (1,-1) (down-right pairs) or (-1,-1) (down-left pairs).
+    if (u_dir.x == 1) {
+      // aC is up-left of bC.
+      uint aDir16 = botDir(aMeta);
+      uint bDir16 = botDir(bMeta);
+      if (aId == P_BOT && botStepDir8(aC, aDir16) == 3u && botMovedParity(aMeta) != tickParity && (botPassable(bId) || (botDrill(aMeta) != 0u))) {
+        uint paintId = aData;
+        uint cd = botCd(aMeta);
+        bId = P_BOT;
+        bData = aData;
+        bMeta = packBotMeta(aDir16, botDrill(aMeta), tickParity, cd);
+        bE = aE;
+        bTemp = aTemp;
+        agentPaintCell(paintId, aId, aTemp, aData, aMeta, aE);
+      } else if (bId == P_BOT && botStepDir8(bC, bDir16) == 7u && botMovedParity(bMeta) != tickParity && (botPassable(aId) || (botDrill(bMeta) != 0u))) {
+        uint paintId = bData;
+        uint cd = botCd(bMeta);
+        aId = P_BOT;
+        aData = bData;
+        aMeta = packBotMeta(bDir16, botDrill(bMeta), tickParity, cd);
+        aE = bE;
+        aTemp = bTemp;
+        agentPaintCell(paintId, bId, bTemp, bData, bMeta, bE);
+      }
+    } else {
+      // u_dir.x == -1: aC is up-right of bC.
+      uint aDir16 = botDir(aMeta);
+      uint bDir16 = botDir(bMeta);
+      if (aId == P_BOT && botStepDir8(aC, aDir16) == 5u && botMovedParity(aMeta) != tickParity && (botPassable(bId) || (botDrill(aMeta) != 0u))) {
+        uint paintId = aData;
+        uint cd = botCd(aMeta);
+        bId = P_BOT;
+        bData = aData;
+        bMeta = packBotMeta(aDir16, botDrill(aMeta), tickParity, cd);
+        bE = aE;
+        bTemp = aTemp;
+        agentPaintCell(paintId, aId, aTemp, aData, aMeta, aE);
+      } else if (bId == P_BOT && botStepDir8(bC, bDir16) == 1u && botMovedParity(bMeta) != tickParity && (botPassable(aId) || (botDrill(bMeta) != 0u))) {
+        uint paintId = bData;
+        uint cd = botCd(bMeta);
+        aId = P_BOT;
+        aData = bData;
+        aMeta = packBotMeta(bDir16, botDrill(bMeta), tickParity, cd);
+        aE = bE;
+        aTemp = bTemp;
+        agentPaintCell(paintId, bId, bTemp, bData, bMeta, bE);
+      }
     }
   }
 
   // Glider: a straight-line single-cell agent that can paint a trail via state.b (paint id).
   if (u_dir.y == 0 && u_dir.x != 0) {
     // Horizontal pass: aC is left of bC.
-    if (aId == P_GLIDER && botDir(aMeta) == 0u && botMovedParity(aMeta) != tickParity && (botPassable(bId) || (botDrill(aMeta) != 0u))) {
+    uint aDir16 = botDir(aMeta);
+    uint bDir16 = botDir(bMeta);
+    if (aId == P_GLIDER && botStepDir8(aC, aDir16) == 2u && botMovedParity(aMeta) != tickParity && (botPassable(bId) || (botDrill(aMeta) != 0u))) {
       uint paintId = aData;
-      uint hand = botHand(aMeta);
       uint cd = botCd(aMeta);
       bId = P_GLIDER;
       bData = aData;
-      bMeta = packBotMeta(0u, botDrill(aMeta), tickParity, hand, cd);
+      bMeta = packBotMeta(aDir16, botDrill(aMeta), tickParity, cd);
       bE = aE;
       bTemp = aTemp;
       agentPaintCell(paintId, aId, aTemp, aData, aMeta, aE);
-    } else if (bId == P_GLIDER && botDir(bMeta) == 2u && botMovedParity(bMeta) != tickParity && (botPassable(aId) || (botDrill(bMeta) != 0u))) {
+    } else if (bId == P_GLIDER && botStepDir8(bC, bDir16) == 6u && botMovedParity(bMeta) != tickParity && (botPassable(aId) || (botDrill(bMeta) != 0u))) {
       uint paintId = bData;
-      uint hand = botHand(bMeta);
       uint cd = botCd(bMeta);
       aId = P_GLIDER;
       aData = bData;
-      aMeta = packBotMeta(2u, botDrill(bMeta), tickParity, hand, cd);
+      aMeta = packBotMeta(bDir16, botDrill(bMeta), tickParity, cd);
       aE = bE;
       aTemp = bTemp;
       agentPaintCell(paintId, bId, bTemp, bData, bMeta, bE);
     }
   } else if (u_dir.x == 0 && u_dir.y != 0) {
     // Vertical pass (down pairs): aC is above bC (u_dir = (0,-1)).
-    if (aId == P_GLIDER && botDir(aMeta) == 3u && botMovedParity(aMeta) != tickParity && (botPassable(bId) || (botDrill(aMeta) != 0u))) {
+    uint aDir16 = botDir(aMeta);
+    uint bDir16 = botDir(bMeta);
+    if (aId == P_GLIDER && botStepDir8(aC, aDir16) == 4u && botMovedParity(aMeta) != tickParity && (botPassable(bId) || (botDrill(aMeta) != 0u))) {
       uint paintId = aData;
-      uint hand = botHand(aMeta);
       uint cd = botCd(aMeta);
       bId = P_GLIDER;
       bData = aData;
-      bMeta = packBotMeta(3u, botDrill(aMeta), tickParity, hand, cd);
+      bMeta = packBotMeta(aDir16, botDrill(aMeta), tickParity, cd);
       bE = aE;
       bTemp = aTemp;
       agentPaintCell(paintId, aId, aTemp, aData, aMeta, aE);
-    } else if (bId == P_GLIDER && botDir(bMeta) == 1u && botMovedParity(bMeta) != tickParity && (botPassable(aId) || (botDrill(bMeta) != 0u))) {
+    } else if (bId == P_GLIDER && botStepDir8(bC, bDir16) == 0u && botMovedParity(bMeta) != tickParity && (botPassable(aId) || (botDrill(bMeta) != 0u))) {
       uint paintId = bData;
-      uint hand = botHand(bMeta);
       uint cd = botCd(bMeta);
       aId = P_GLIDER;
       aData = bData;
-      aMeta = packBotMeta(1u, botDrill(bMeta), tickParity, hand, cd);
+      aMeta = packBotMeta(bDir16, botDrill(bMeta), tickParity, cd);
       aE = bE;
       aTemp = bTemp;
       agentPaintCell(paintId, bId, bTemp, bData, bMeta, bE);
+    }
+  } else if (abs(u_dir.x) == 1 && u_dir.y == -1) {
+    if (u_dir.x == 1) {
+      uint aDir16 = botDir(aMeta);
+      uint bDir16 = botDir(bMeta);
+      if (aId == P_GLIDER && botStepDir8(aC, aDir16) == 3u && botMovedParity(aMeta) != tickParity && (botPassable(bId) || (botDrill(aMeta) != 0u))) {
+        uint paintId = aData;
+        uint cd = botCd(aMeta);
+        bId = P_GLIDER;
+        bData = aData;
+        bMeta = packBotMeta(aDir16, botDrill(aMeta), tickParity, cd);
+        bE = aE;
+        bTemp = aTemp;
+        agentPaintCell(paintId, aId, aTemp, aData, aMeta, aE);
+      } else if (bId == P_GLIDER && botStepDir8(bC, bDir16) == 7u && botMovedParity(bMeta) != tickParity && (botPassable(aId) || (botDrill(bMeta) != 0u))) {
+        uint paintId = bData;
+        uint cd = botCd(bMeta);
+        aId = P_GLIDER;
+        aData = bData;
+        aMeta = packBotMeta(bDir16, botDrill(bMeta), tickParity, cd);
+        aE = bE;
+        aTemp = bTemp;
+        agentPaintCell(paintId, bId, bTemp, bData, bMeta, bE);
+      }
+    } else {
+      uint aDir16 = botDir(aMeta);
+      uint bDir16 = botDir(bMeta);
+      if (aId == P_GLIDER && botStepDir8(aC, aDir16) == 5u && botMovedParity(aMeta) != tickParity && (botPassable(bId) || (botDrill(aMeta) != 0u))) {
+        uint paintId = aData;
+        uint cd = botCd(aMeta);
+        bId = P_GLIDER;
+        bData = aData;
+        bMeta = packBotMeta(aDir16, botDrill(aMeta), tickParity, cd);
+        bE = aE;
+        bTemp = aTemp;
+        agentPaintCell(paintId, aId, aTemp, aData, aMeta, aE);
+      } else if (bId == P_GLIDER && botStepDir8(bC, bDir16) == 1u && botMovedParity(bMeta) != tickParity && (botPassable(aId) || (botDrill(bMeta) != 0u))) {
+        uint paintId = bData;
+        uint cd = botCd(bMeta);
+        aId = P_GLIDER;
+        aData = bData;
+        aMeta = packBotMeta(bDir16, botDrill(bMeta), tickParity, cd);
+        aE = bE;
+        aTemp = bTemp;
+        agentPaintCell(paintId, bId, bTemp, bData, bMeta, bE);
+      }
     }
   }
 
@@ -2063,8 +2176,8 @@ uvec4 makeCell(uint id) {
   else if (id == P_BRINE) { data = 120u; }
   else if (id == P_SPARK) { temp = 245u; data = 18u; }
   else if (id == P_BATTERY) { data = 255u; }
-  else if (id == P_BOT) { data = 0u; meta = 136u; }
-  else if (id == P_GLIDER) { data = 0u; meta = 136u; }
+  else if (id == P_BOT) { data = 0u; meta = 148u; }
+  else if (id == P_GLIDER) { data = 0u; meta = 148u; }
   return uvec4(id, temp, data, meta);
 }
 

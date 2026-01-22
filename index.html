@@ -47,11 +47,19 @@
               <span>Dir</span>
               <select id="agentDirSelect">
                 <option value="auto" selected>Auto</option>
-                <option value="0">→</option>
-                <option value="1">↑</option>
-                <option value="2">←</option>
-                <option value="3">↓</option>
+                <option value="0">↑</option>
+                <option value="2">↗</option>
+                <option value="4">→</option>
+                <option value="6">↘</option>
+                <option value="8">↓</option>
+                <option value="10">↙</option>
+                <option value="12">←</option>
+                <option value="14">↖</option>
               </select>
+            </label>
+            <label id="agentDrillControl" class="hotbar__toggle" hidden title="Agent drill (move through solids)">
+              <span class="hotbar__tag" aria-hidden="true">⛏️</span>
+              <input id="agentDrill" class="toggle toggle--mini" type="checkbox" aria-label="Agent drill" />
             </label>
             <label id="singlePaintControl" class="hotbar__toggle" title="Single placement (disable continuous paint while holding)">
               <span class="hotbar__tag" aria-hidden="true">1×</span>

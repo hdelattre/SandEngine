@@ -93,6 +93,8 @@ const agentPaintControl = /** @type {HTMLElement} */ (document.getElementById("a
 const agentPaintSelect = /** @type {HTMLSelectElement} */ (document.getElementById("agentPaintSelect"));
 const agentDirControl = /** @type {HTMLElement} */ (document.getElementById("agentDirControl"));
 const agentDirSelect = /** @type {HTMLSelectElement} */ (document.getElementById("agentDirSelect"));
+const agentDrillControl = /** @type {HTMLElement} */ (document.getElementById("agentDrillControl"));
+const agentDrill = /** @type {HTMLInputElement} */ (document.getElementById("agentDrill"));
 const singlePaintControl = /** @type {HTMLElement} */ (document.getElementById("singlePaintControl"));
 const singlePaint = /** @type {HTMLInputElement} */ (document.getElementById("singlePaint"));
 const brushSize = /** @type {HTMLInputElement} */ (document.getElementById("brushSize"));
@@ -598,7 +600,7 @@ function forEachLinePoint(x0, y0, x1, y1, fn) {
  * @param {number} x
  * @param {number} y
  * @param {'paint'|'erase'} mode
- * @param {0|1|2|3|null} [agentDir]
+ * @param {0|1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|null} [agentDir]
  */
 function paintAt(x, y, mode, agentDir) {
   const radiusUi = Number(brushSize.value) | 0;
@@ -627,12 +629,13 @@ function paintAt(x, y, mode, agentDir) {
   let data = base.data;
   if (!isErase && (id === Particle.BOT || id === Particle.GLIDER)) {
     data = clampInt(Number(agentPaintSelect.value) || 0, 0, 255);
+    flags = (flags & ~(1 << 5)) | (agentDrill.checked ? 1 << 5 : 0);
   }
   if (
     agentDir !== null &&
     (id === Particle.BOT || id === Particle.GLIDER)
   ) {
-    flags = (flags & ~3) | agentDir;
+    flags = (flags & ~15) | (agentDir & 15);
   }
 
   sim.paintCircle(x, y, { id, temp: base.temp, data, flags }, radius, { addMode: doAdd });
@@ -646,6 +649,22 @@ function paintAt(x, y, mode, agentDir) {
 function clampInt(v, lo, hi) {
   v |= 0;
   return v < lo ? lo : v > hi ? hi : v;
+}
+
+/**
+ * 8-way direction index matching shader `dirIndexFromDelta`:
+ * 0=up,1=up-right,2=right,3=down-right,4=down,5=down-left,6=left,7=up-left.
+ * @param {number} dx
+ * @param {number} dy
+ * @returns {0|1|2|3|4|5|6|7}
+ */
+function dirIndex16FromDxDy(dx, dy) {
+  // Compute an angle where 0 points "up" (+y) and increases clockwise.
+  const angle = Math.atan2(dx, dy);
+  const tau = Math.PI * 2;
+  const t = ((angle % tau) + tau) % tau;
+  const idx = Math.round((t / tau) * 16) & 15;
+  return /** @type {0|1|2|3|4|5|6|7|8|9|10|11|12|13|14|15} */ (idx);
 }
 
 function syncStampInputsFromState() {
@@ -722,6 +741,7 @@ function refreshToolbarVisibility() {
   stampControls.hidden = !isStamp;
   agentPaintControl.hidden = isStamp || !isAgent;
   agentDirControl.hidden = isStamp || !isAgent;
+  agentDrillControl.hidden = isStamp || !isAgent;
   singlePaintControl.hidden = isStamp;
   if (pasteEdgeStoneWrap) pasteEdgeStoneWrap.hidden = !isStamp;
 }
@@ -1238,6 +1258,7 @@ function setActiveLevel(levelId) {
   pasteEdgeStone.disabled = !isSandbox;
   agentPaintSelect.disabled = !isSandbox;
   agentDirSelect.disabled = !isSandbox;
+  agentDrill.disabled = !isSandbox;
   if (!isSandbox) clearStamp();
   else syncStampInputsFromState();
   clearBtn.textContent = isSandbox ? "Clear" : "Restart";
@@ -1776,16 +1797,13 @@ function loop(now) {
     const y1 = brush.y;
     const dx = x1 - x0;
     const dy = y1 - y0;
-    /** @type {0|1|2|3|null} */
+    /** @type {0|1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|null} */
     let agentDir = null;
     const selectedParticle = Number(particleSelect.value) | 0;
     if (selectedParticle === Particle.BOT || selectedParticle === Particle.GLIDER) {
       const picked = agentDirSelect.value;
-      if (picked !== "auto") agentDir = /** @type {0|1|2|3} */ (clampInt(Number(picked) || 0, 0, 3));
-      else if (dx !== 0 || dy !== 0) {
-        if (Math.abs(dx) >= Math.abs(dy)) agentDir = dx > 0 ? 0 : 2;
-        else agentDir = dy > 0 ? 1 : 3;
-      }
+      if (picked !== "auto") agentDir = /** @type {0|1|2|3|4|5|6|7|8|9|10|11|12|13|14|15} */ (clampInt(Number(picked) || 0, 0, 15));
+      else if (dx !== 0 || dy !== 0) agentDir = dirIndex16FromDxDy(dx, dy);
     }
     forEachLinePoint(x0, y0, x1, y1, (x, y) => paintAt(x, y, brush.mode, agentDir));
     brush.lastX = x1;
