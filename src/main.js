@@ -1776,10 +1776,13 @@ function loop(now) {
 
   /** @type {number} */
   let targetSpsForFrame = 0;
+  /** @type {number} */
+  let maxBacklogSteps = MAX_STEPS_PER_FRAME;
 
   if (mode === "sps") {
     const targetSps = clamp(Number(simRate.value) || 0, MIN_STEPS_PER_SECOND, MAX_STEPS_PER_SECOND);
     targetSpsForFrame = targetSps;
+    maxBacklogSteps = Math.max(MAX_STEPS_PER_FRAME, targetSps * 0.2);
     let currentSps = 0;
     if (startupStepRamp) {
       const t = clamp((now - startupStepRamp.startNow - startupStepRamp.holdMs) / Math.max(1, startupStepRamp.durationMs), 0, 1);
@@ -1799,6 +1802,7 @@ function loop(now) {
   } else {
     const targetSpf = clampInt(Number(simRate.value) || 0, 0, MAX_STEPS_PER_FRAME);
     targetSpsForFrame = 0;
+    maxBacklogSteps = MAX_STEPS_PER_FRAME * 2;
     if (startupStepRamp) {
       const t = clamp((now - startupStepRamp.startNow - startupStepRamp.holdMs) / Math.max(1, startupStepRamp.durationMs), 0, 1);
       simStepAcc += targetSpf * t;
@@ -1814,6 +1818,11 @@ function loop(now) {
       stepOnce = false;
     }
   }
+
+  // Avoid building a long backlog when the GPU can't keep up. We already cap
+  // steps-per-frame, so allowing the accumulator to grow just makes the UI feel
+  // "stuck" trying to catch up.
+  if (simStepAcc > maxBacklogSteps) simStepAcc = maxBacklogSteps;
 
   const rawSteps = simStepAcc | 0;
   const steps = clampInt(rawSteps, 0, MAX_STEPS_PER_FRAME);
@@ -1833,16 +1842,27 @@ function loop(now) {
     const target = targetSpsForFrame;
     const eff = simEffectiveSpsEma;
     const gpuBound = running && !startupStepRamp && target > 0 && (overflowed || (steps === MAX_STEPS_PER_FRAME && eff + 5 < target));
-    simSlow = gpuBound && eff < target * 0.92;
+    const fpsLow = running && !startupStepRamp && fps < 30;
+    simSlow = (gpuBound && eff < target * 0.92) || (fpsLow && target > 0);
 
     const userRecentlyChanged = now - lastUserRateChangeNow < 2000;
     const canAutoTune = running && !startupStepRamp && !userRecentlyChanged;
-    if (canAutoTune && gpuBound && now - lastAutoTuneNow > 650) {
-      // Reduce requested SPS toward the observed throughput (only decreases).
-      const suggested = clamp(Math.floor((eff * 0.92) / 10) * 10, MIN_STEPS_PER_SECOND, MAX_STEPS_PER_SECOND);
+    if (canAutoTune && (gpuBound || fpsLow) && now - lastAutoTuneNow > 650) {
+      // Reduce requested SPS toward what the machine can sustain (only decreases).
       const current = clamp(Number(simRate.value) || 0, MIN_STEPS_PER_SECOND, MAX_STEPS_PER_SECOND);
-      if (suggested >= MIN_STEPS_PER_SECOND && suggested < current) {
-        simRate.value = String(suggested);
+      const quantum = clampInt(Math.round(current * 0.05), 1, 50);
+      const suggestedByThroughput = eff * 0.92;
+      const suggestedByFps = current * clamp((fps / 30) * 0.9, 0, 1);
+      const desiredFloat = Math.max(1, Math.min(suggestedByThroughput, suggestedByFps));
+      const desired = clamp(Math.floor(desiredFloat / quantum) * quantum, 1, MAX_STEPS_PER_SECOND);
+
+      // Apply a capped proportional reduction to avoid big SPS jumps.
+      const maxDropRaw = Math.max(quantum, Math.round(current * 0.15));
+      const maxDrop = Math.max(quantum, Math.round(maxDropRaw / quantum) * quantum);
+      const next = clamp(Math.max(desired, current - maxDrop), 1, MAX_STEPS_PER_SECOND);
+
+      if (next < current) {
+        simRate.value = String(next);
         syncRangeReadouts();
         lastAutoTuneNow = now;
       }
