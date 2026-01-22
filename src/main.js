@@ -1921,8 +1921,10 @@ requestAnimationFrame(loop);
 function resizeCanvasToDisplaySize(c) {
   const dpr = window.devicePixelRatio || 1;
   const rect = c.getBoundingClientRect();
-  const w = Math.max(1, Math.round(rect.width * dpr));
-  const h = Math.max(1, Math.round(rect.height * dpr));
+  const cssW = Math.max(1, Math.round(rect.width));
+  const cssH = Math.max(1, Math.round(rect.height));
+  const w = Math.max(1, Math.round(cssW * dpr));
+  const h = Math.max(1, Math.round(cssH * dpr));
   if (c.width !== w || c.height !== h) {
     c.width = w;
     c.height = h;
