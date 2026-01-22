@@ -89,6 +89,8 @@ const particleGrid = /** @type {HTMLDivElement} */ (document.getElementById("par
 const particlePickerCloseBtn = /** @type {HTMLButtonElement} */ (document.getElementById("particlePickerCloseBtn"));
 const brushControl = /** @type {HTMLElement} */ (document.getElementById("brushControl"));
 const stampControls = /** @type {HTMLElement} */ (document.getElementById("stampControls"));
+const agentPaintControl = /** @type {HTMLElement} */ (document.getElementById("agentPaintControl"));
+const agentPaintSelect = /** @type {HTMLSelectElement} */ (document.getElementById("agentPaintSelect"));
 const brushSize = /** @type {HTMLInputElement} */ (document.getElementById("brushSize"));
 const rateMode = /** @type {HTMLSelectElement} */ (document.getElementById("rateMode"));
 const simRateLabel = /** @type {HTMLSpanElement} */ (document.getElementById("simRateLabel"));
@@ -140,6 +142,16 @@ for (const id of Object.values(Particle)) {
   caPaintSelect.appendChild(opt2);
 }
 particleSelect.value = String(Particle.SAND);
+
+for (const id of Object.values(Particle)) {
+  if (id === Particle.BOT || id === Particle.GLIDER) continue;
+  const def = particleDefs[id];
+  const opt = document.createElement("option");
+  opt.value = String(def.id);
+  opt.textContent = def.name;
+  agentPaintSelect.appendChild(opt);
+}
+agentPaintSelect.value = String(Particle.EMPTY);
 caPaintSelect.value = String(Particle.SAND);
 
 const paletteTexels = buildPaletteTexels(particleDefs);
@@ -292,6 +304,8 @@ let stamp = null;
 /** @type {'paint'|'stamp'} */
 let activeTool = "paint";
 
+const pasteEdgeStoneWrap = pasteEdgeStone.closest("label");
+
 /**
  * @param {number} id
  */
@@ -309,6 +323,7 @@ function syncParticleUi() {
     const pid = Number(el.dataset.pid) | 0;
     el.setAttribute("aria-pressed", pid === current ? "true" : "false");
   }
+  refreshToolbarVisibility();
 }
 
 /**
@@ -465,6 +480,9 @@ function syncParticleGrid() {
 }
 
 particleSelect.addEventListener("change", () => syncParticleUi());
+agentPaintSelect.addEventListener("change", () => {
+  // no-op: used when painting bots/gliders
+});
 particleMoreBtn.addEventListener("click", (e) => {
   if (activeTool === "stamp") void startPasteFlow(e.shiftKey);
   else setParticlePickerOpen(true);
@@ -601,6 +619,10 @@ function paintAt(x, y, mode, agentDir) {
   const doAdd = !isErase && addMode.checked;
 
   let flags = base.flags;
+  let data = base.data;
+  if (!isErase && (id === Particle.BOT || id === Particle.GLIDER)) {
+    data = clampInt(Number(agentPaintSelect.value) || 0, 0, 255);
+  }
   if (
     agentDir !== null &&
     (id === Particle.BOT || id === Particle.GLIDER)
@@ -608,7 +630,7 @@ function paintAt(x, y, mode, agentDir) {
     flags = (flags & ~3) | agentDir;
   }
 
-  sim.paintCircle(x, y, { id, temp: base.temp, data: base.data, flags }, radius, { addMode: doAdd });
+  sim.paintCircle(x, y, { id, temp: base.temp, data, flags }, radius, { addMode: doAdd });
 }
 
 /**
@@ -687,12 +709,13 @@ function onStampHInput() {
 stampW.addEventListener("input", onStampWInput);
 stampH.addEventListener("input", onStampHInput);
 
-const pasteEdgeStoneWrap = pasteEdgeStone.closest("label");
-
 function refreshToolbarVisibility() {
   const isStamp = activeTool === "stamp";
+  const selectedParticle = Number(particleSelect.value) | 0;
+  const isAgent = selectedParticle === Particle.BOT || selectedParticle === Particle.GLIDER;
   brushControl.hidden = isStamp;
   stampControls.hidden = !isStamp;
+  agentPaintControl.hidden = isStamp || !isAgent;
   if (pasteEdgeStoneWrap) pasteEdgeStoneWrap.hidden = !isStamp;
 }
 
@@ -1202,6 +1225,7 @@ function setActiveLevel(levelId) {
   toolStampBtn.disabled = !isSandbox;
   resSelect.disabled = !isSandbox;
   pasteEdgeStone.disabled = !isSandbox;
+  agentPaintSelect.disabled = !isSandbox;
   if (!isSandbox) clearStamp();
   else syncStampInputsFromState();
   clearBtn.textContent = isSandbox ? "Clear" : "Restart";
