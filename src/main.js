@@ -91,6 +91,8 @@ const brushControl = /** @type {HTMLElement} */ (document.getElementById("brushC
 const stampControls = /** @type {HTMLElement} */ (document.getElementById("stampControls"));
 const agentPaintControl = /** @type {HTMLElement} */ (document.getElementById("agentPaintControl"));
 const agentPaintSelect = /** @type {HTMLSelectElement} */ (document.getElementById("agentPaintSelect"));
+const agentDirControl = /** @type {HTMLElement} */ (document.getElementById("agentDirControl"));
+const agentDirSelect = /** @type {HTMLSelectElement} */ (document.getElementById("agentDirSelect"));
 const brushSize = /** @type {HTMLInputElement} */ (document.getElementById("brushSize"));
 const rateMode = /** @type {HTMLSelectElement} */ (document.getElementById("rateMode"));
 const simRateLabel = /** @type {HTMLSpanElement} */ (document.getElementById("simRateLabel"));
@@ -717,6 +719,7 @@ function refreshToolbarVisibility() {
   brushControl.hidden = isStamp;
   stampControls.hidden = !isStamp;
   agentPaintControl.hidden = isStamp || !isAgent;
+  agentDirControl.hidden = isStamp || !isAgent;
   if (pasteEdgeStoneWrap) pasteEdgeStoneWrap.hidden = !isStamp;
 }
 
@@ -1231,6 +1234,7 @@ function setActiveLevel(levelId) {
   resSelect.disabled = !isSandbox;
   pasteEdgeStone.disabled = !isSandbox;
   agentPaintSelect.disabled = !isSandbox;
+  agentDirSelect.disabled = !isSandbox;
   if (!isSandbox) clearStamp();
   else syncStampInputsFromState();
   clearBtn.textContent = isSandbox ? "Clear" : "Restart";
@@ -1767,9 +1771,14 @@ function loop(now) {
     const dy = y1 - y0;
     /** @type {0|1|2|3|null} */
     let agentDir = null;
-    if (dx !== 0 || dy !== 0) {
-      if (Math.abs(dx) >= Math.abs(dy)) agentDir = dx > 0 ? 0 : 2;
-      else agentDir = dy > 0 ? 1 : 3;
+    const selectedParticle = Number(particleSelect.value) | 0;
+    if (selectedParticle === Particle.BOT || selectedParticle === Particle.GLIDER) {
+      const picked = agentDirSelect.value;
+      if (picked !== "auto") agentDir = /** @type {0|1|2|3} */ (clampInt(Number(picked) || 0, 0, 3));
+      else if (dx !== 0 || dy !== 0) {
+        if (Math.abs(dx) >= Math.abs(dy)) agentDir = dx > 0 ? 0 : 2;
+        else agentDir = dy > 0 ? 1 : 3;
+      }
     }
     forEachLinePoint(x0, y0, x1, y1, (x, y) => paintAt(x, y, brush.mode, agentDir));
     brush.lastX = x1;
