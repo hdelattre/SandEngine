@@ -105,6 +105,7 @@ const simRate = /** @type {HTMLInputElement} */ (document.getElementById("simRat
 const zoomInput = /** @type {HTMLInputElement} */ (document.getElementById("zoom"));
 const viewSelect = /** @type {HTMLSelectElement} */ (document.getElementById("viewSelect"));
 const resSelect = /** @type {HTMLSelectElement} */ (document.getElementById("resSelect"));
+const reliefMode = /** @type {HTMLSelectElement} */ (document.getElementById("reliefMode"));
 const pasteEdgeStone = /** @type {HTMLInputElement} */ (document.getElementById("pasteEdgeStone"));
 const stampMode = /** @type {HTMLInputElement} */ (document.getElementById("stampMode"));
 const stampW = /** @type {HTMLInputElement} */ (document.getElementById("stampW"));
@@ -1162,6 +1163,11 @@ clearBtn.addEventListener("click", () => {
 
 viewSelect.addEventListener("change", () => {
   sim.setViewMode(/** @type {ViewMode} */ (viewSelect.value));
+});
+
+sim.setReliefMode(/** @type {'off'|'edges'|'dunes'} */ (reliefMode.value));
+reliefMode.addEventListener("change", () => {
+  sim.setReliefMode(/** @type {'off'|'edges'|'dunes'} */ (reliefMode.value));
 });
 
 sim.caRule = clampInt(Number(caRule.value) || 0, 0, 255);

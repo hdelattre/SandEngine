@@ -2660,6 +2660,7 @@ uniform usampler2D u_energy;
 uniform sampler2D u_palette;
 uniform ivec2 u_size;
 uniform int u_viewMode; // 0 material, 1 temperature, 2 wind
+uniform int u_reliefMode; // 0 off, 1 edges (cheap), 2 dunes (expensive)
 uniform uint u_ambientTemp;
 uniform vec2 u_camCenter;
 uniform float u_camZoom;
@@ -2716,6 +2717,78 @@ vec3 shadeMaterial(uint id, uint temp) {
   return shaded;
 }
 
+float massFromId(uint id) {
+  // A simple mass proxy for relief shading.
+  // Exclude gases/energy so piles feel "heavier" than smoke/steam/flame.
+  if (id == P_EMPTY) return 0.0;
+  if (id == 8u) return 0.0;  // FIRE
+  if (id == 9u) return 0.0;  // SMOKE
+  if (id == 10u) return 0.0; // STEAM
+  if (id == 17u) return 0.0; // SPARK
+  return 1.0;
+}
+
+float massAt(ivec2 c) {
+  c = clamp(c, ivec2(0), u_size - ivec2(1));
+  uint id = texelFetch(u_state, c, 0).r;
+  return massFromId(id);
+}
+
+float headAt(ivec2 c) {
+  // Approximate column "head"/pressure by looking upward a few cells.
+  // Heavier piles => higher head => smoother dune-like gradients.
+  float h = 0.0;
+  float w = 1.0;
+  float wsum = 0.0;
+  for (int i = 0; i < 8; i++) {
+    h += massAt(c + ivec2(0, i)) * w;
+    wsum += w;
+    w *= 0.84;
+  }
+  return (wsum > 0.0) ? (h / wsum) : 0.0;
+}
+
+float reliefLightFromGrad(float hx, float hy) {
+  float z = 2.2; // relief strength
+  vec3 n = normalize(vec3(-hx, -hy, z));
+  vec3 l = normalize(vec3(-0.55, 0.65, 0.55));
+  float diff = max(dot(n, l), 0.0);
+  float ambient = 0.62;
+  float light = ambient + (1.0 - ambient) * diff;
+
+  // Normalize so a perfectly-flat surface (hx=hy=0) stays at ~1.0 brightness.
+  float flatDiff = max(l.z, 0.0);
+  float flatLight = ambient + (1.0 - ambient) * flatDiff;
+  light = (flatLight > 1e-6) ? (light / flatLight) : light;
+
+  return clamp(light, 0.55, 1.65);
+}
+
+vec3 applyRelief(vec3 base, ivec2 c) {
+  if (u_reliefMode == 0) return base;
+
+  float hx;
+  float hy;
+
+  if (u_reliefMode == 2 && u_camZoom <= 2.5) {
+    float hL = headAt(c + ivec2(-1, 0));
+    float hR = headAt(c + ivec2(1, 0));
+    float hD = headAt(c + ivec2(0, -1));
+    float hU = headAt(c + ivec2(0, 1));
+    hx = hR - hL;
+    hy = hU - hD;
+  } else {
+    float hL = massAt(c + ivec2(-1, 0));
+    float hR = massAt(c + ivec2(1, 0));
+    float hD = massAt(c + ivec2(0, -1));
+    float hU = massAt(c + ivec2(0, 1));
+    hx = hR - hL;
+    hy = hU - hD;
+  }
+
+  return base * reliefLightFromGrad(hx, hy);
+}
+
 void main() {
   vec2 uv = (v_uv - vec2(0.5)) / max(u_camZoom, 1e-3) + u_camCenter;
   vec2 p = uv * vec2(u_size);
@@ -2733,7 +2806,9 @@ void main() {
     } else if (u_viewMode == 2) {
       outColor = vec4(windColor(windAt(c)), 1.0);
     } else {
-      outColor = vec4(shadeMaterial(id, temp), 1.0);
+      vec3 base = shadeMaterial(id, temp, s.b);
+      base = applyRelief(base, c);
+      outColor = vec4(base, 1.0);
     }
     return;
   }
@@ -2784,7 +2859,14 @@ void main() {
   if (wsum <= 0.0) {
     outColor = vec4(shadeMaterial(P_EMPTY, a.g), 1.0);
   } else {
-    outColor = vec4(sum / wsum, 1.0);
+    float h00 = massFromId(a.r);
+    float h10 = massFromId(b.r);
+    float h01 = massFromId(c.r);
+    float h11 = massFromId(d.r);
+    float hx = ((h10 - h00) + (h11 - h01)) * 0.5;
+    float hy = ((h01 - h00) + (h11 - h10)) * 0.5;
+    float light = reliefLightFromGrad(hx, hy);
+    outColor = vec4((sum / wsum) * light, 1.0);
   }
 }
 `;

@@ -14,6 +14,7 @@ import {
 /** @typedef {import('./types.js').ParticleDef} ParticleDef */
 /** @typedef {import('./types.js').ViewMode} ViewMode */
 /** @typedef {import('./types.js').GpuSimOptions} GpuSimOptions */
+/** @typedef {'off'|'edges'|'dunes'} ReliefMode */
 
 /**
  * @param {number} n
@@ -48,6 +49,8 @@ export class GpuSim {
     this.tick = 0;
     this.seed = opts.seed >>> 0;
     this.viewMode = /** @type {ViewMode} */ ("material");
+    /** @type {ReliefMode} */
+    this.reliefMode = "off";
     this.camCenterX = 0.5;
     this.camCenterY = 0.5;
     this.camZoom = 1.0;
@@ -532,6 +535,7 @@ export class GpuSim {
         palette: mustGetUniform(gl, program, "u_palette"),
         size: mustGetUniform(gl, program, "u_size"),
         viewMode: mustGetUniform(gl, program, "u_viewMode"),
+        reliefMode: mustGetUniform(gl, program, "u_reliefMode"),
         ambientTemp: mustGetUniform(gl, program, "u_ambientTemp"),
         camCenter: mustGetUniform(gl, program, "u_camCenter"),
         camZoom: mustGetUniform(gl, program, "u_camZoom"),
@@ -689,6 +693,13 @@ export class GpuSim {
    */
   setViewMode(mode) {
     this.viewMode = mode;
+  }
+
+  /**
+   * @param {ReliefMode} mode
+   */
+  setReliefMode(mode) {
+    this.reliefMode = mode;
   }
 
   /**
@@ -1197,6 +1208,7 @@ export class GpuSim {
     gl.useProgram(program);
     gl.uniform2i(u.size, this.width, this.height);
     gl.uniform1i(u.viewMode, this.viewMode === "temperature" ? 1 : this.viewMode === "wind" ? 2 : 0);
+    gl.uniform1i(u.reliefMode, this.reliefMode === "dunes" ? 2 : this.reliefMode === "edges" ? 1 : 0);
     gl.uniform1ui(u.ambientTemp, this.ambientTemp >>> 0);
     gl.uniform2f(u.camCenter, this.camCenterX, this.camCenterY);
     gl.uniform1f(u.camZoom, this.camZoom);
