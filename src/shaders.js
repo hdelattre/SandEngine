@@ -2230,6 +2230,8 @@ uniform float u_camZoom;
 
 out vec4 outColor;
 
+const uint P_EMPTY = 0u;
+
 vec3 temperatureColor(float t) {
   // 0..1: cold->hot
   vec3 c0 = vec3(0.12, 0.22, 0.65);
@@ -2243,28 +2245,78 @@ vec3 temperatureColor(float t) {
   return c;
 }
 
+vec3 shadeMaterial(uint id, uint temp) {
+  vec3 base = texelFetch(u_palette, ivec2(int(id), 0), 0).rgb;
+  float heat = (float(temp) - float(u_ambientTemp)) / 128.0; // ~[-1..1]
+  vec3 warm = vec3(1.0, 0.45, 0.15);
+  vec3 cool = vec3(0.25, 0.45, 1.0);
+  vec3 shaded = base;
+  shaded = mix(shaded, warm, clamp(heat, 0.0, 1.0) * 0.35);
+  shaded = mix(shaded, cool, clamp(-heat, 0.0, 1.0) * 0.25);
+  return shaded;
+}
+
 void main() {
   vec2 uv = (v_uv - vec2(0.5)) / max(u_camZoom, 1e-3) + u_camCenter;
-  ivec2 c = ivec2(floor(uv * vec2(u_size)));
-  c = clamp(c, ivec2(0), u_size - ivec2(1));
+  vec2 p = uv * vec2(u_size);
+  vec2 fw = fwidth(p);
+  bool minified = max(fw.x, fw.y) > 1.0;
 
-  uvec4 s = texelFetch(u_state, c, 0);
-  uint id = s.r;
-  uint temp = s.g;
+  if (!minified) {
+    ivec2 c = ivec2(floor(p));
+    c = clamp(c, ivec2(0), u_size - ivec2(1));
+    uvec4 s = texelFetch(u_state, c, 0);
+    uint id = s.r;
+    uint temp = s.g;
+    if (u_viewMode == 1) {
+      outColor = vec4(temperatureColor(float(temp) / 255.0), 1.0);
+    } else {
+      outColor = vec4(shadeMaterial(id, temp), 1.0);
+    }
+    return;
+  }
+
+  ivec2 c0 = ivec2(floor(p));
+  ivec2 s00 = clamp(c0, ivec2(0), u_size - ivec2(1));
+  ivec2 s10 = clamp(c0 + ivec2(1, 0), ivec2(0), u_size - ivec2(1));
+  ivec2 s01 = clamp(c0 + ivec2(0, 1), ivec2(0), u_size - ivec2(1));
+  ivec2 s11 = clamp(c0 + ivec2(1, 1), ivec2(0), u_size - ivec2(1));
+
+  uvec4 a = texelFetch(u_state, s00, 0);
+  uvec4 b = texelFetch(u_state, s10, 0);
+  uvec4 c = texelFetch(u_state, s01, 0);
+  uvec4 d = texelFetch(u_state, s11, 0);
 
   if (u_viewMode == 1) {
-    float t = float(temp) / 255.0;
+    float t = (float(a.g) + float(b.g) + float(c.g) + float(d.g)) * 0.25 / 255.0;
     outColor = vec4(temperatureColor(t), 1.0);
     return;
   }
 
-  vec4 base = texelFetch(u_palette, ivec2(int(id), 0), 0);
-  float heat = (float(temp) - float(u_ambientTemp)) / 128.0; // ~[-1..1]
-  vec3 warm = vec3(1.0, 0.45, 0.15);
-  vec3 cool = vec3(0.25, 0.45, 1.0);
-  vec3 shaded = base.rgb;
-  shaded = mix(shaded, warm, clamp(heat, 0.0, 1.0) * 0.35);
-  shaded = mix(shaded, cool, clamp(-heat, 0.0, 1.0) * 0.25);
-  outColor = vec4(shaded, 1.0);
+  vec3 sum = vec3(0.0);
+  float wsum = 0.0;
+
+  if (a.r != P_EMPTY) {
+    sum += shadeMaterial(a.r, a.g);
+    wsum += 1.0;
+  }
+  if (b.r != P_EMPTY) {
+    sum += shadeMaterial(b.r, b.g);
+    wsum += 1.0;
+  }
+  if (c.r != P_EMPTY) {
+    sum += shadeMaterial(c.r, c.g);
+    wsum += 1.0;
+  }
+  if (d.r != P_EMPTY) {
+    sum += shadeMaterial(d.r, d.g);
+    wsum += 1.0;
+  }
+
+  if (wsum <= 0.0) {
+    outColor = vec4(shadeMaterial(P_EMPTY, a.g), 1.0);
+  } else {
+    outColor = vec4(sum / wsum, 1.0);
+  }
 }
 `;
