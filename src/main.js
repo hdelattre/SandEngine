@@ -828,6 +828,10 @@ canvas.addEventListener("pointerdown", (e) => {
   brush.down = true;
   const wantsErase = e.button === 2 || e.shiftKey;
   brush.mode = wantsErase ? "erase" : "paint";
+  if (!wantsErase && sim.caEnabled) {
+    const id = Number(particleSelect.value) | 0;
+    if (id === (sim.caPaintId | 0)) sim.setCaSeed(x, y);
+  }
   brush.x = x;
   brush.y = y;
   brush.lastX = x;

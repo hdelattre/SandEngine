@@ -55,6 +55,10 @@ export class GpuSim {
     this.caInterval = 1;
     this.caRule = 30;
     this.caPaintId = 1;
+    this.caSeedX = (opts.width >> 1) | 0;
+    this.caSeedY = Math.max(1, (opts.height | 0) - 2);
+    this.caGen = 0;
+    this.caHasSeed = true;
     /** @type {null | {program: WebGLProgram, u: Record<string, WebGLUniformLocation>}} */
     this._gol = null;
     /** @type {Promise<void> | null} */
@@ -285,8 +289,22 @@ export class GpuSim {
     }
 
     const init = new Uint8Array(w * 4);
-    const cx = Math.max(0, Math.min(w - 1, w >> 1));
+    const minX = w >= 3 ? 1 : 0;
+    const maxX = w >= 3 ? w - 2 : w - 1;
+    const wantX = this.caHasSeed ? (this.caSeedX | 0) : (w >> 1);
+    const cx = Math.max(minX, Math.min(maxX, wantX));
     init[cx * 4 + 0] = 1;
+    this.caSeedX = cx;
+    const h = this.height | 0;
+    const minY = h >= 2 ? 1 : 0;
+    const maxY = h >= 3 ? h - 2 : h - 1;
+    if (!this.caHasSeed) {
+      this.caHasSeed = true;
+      this.caSeedY = maxY;
+    } else {
+      this.caSeedY = Math.max(minY, Math.min(maxY, this.caSeedY | 0));
+    }
+    this.caGen = 0;
 
     for (let i = 0; i < 2; i++) {
       const tex = createRgba8uiTexture(gl, { width: w, height: 1, data: init });
@@ -297,6 +315,43 @@ export class GpuSim {
 
     this._caFront = 0;
     this._caWidth = w;
+  }
+
+  /**
+   * Resets the Wolfram CA seed + generation origin. The CA's 1D state is seeded
+   * as a single 1-bit at `x`, and generation 0 will be applied at `y`.
+   *
+   * @param {number} x
+   * @param {number} y
+   */
+  setCaSeed(x, y) {
+    const w = this.width | 0;
+    const h = this.height | 0;
+    if (w <= 0 || h <= 0) return;
+    const minX = w >= 3 ? 1 : 0;
+    const maxX = w >= 3 ? w - 2 : w - 1;
+    const minY = h >= 2 ? 1 : 0;
+    const maxY = h >= 3 ? h - 2 : h - 1;
+    const sx = Math.max(minX, Math.min(maxX, x | 0));
+    const sy = Math.max(minY, Math.min(maxY, y | 0));
+    this.caSeedX = sx;
+    this.caSeedY = sy;
+    this.caGen = 0;
+    this.caHasSeed = true;
+
+    if (!this._caTex[0] || this._caWidth !== w) return;
+
+    const gl = this.gl;
+    const init = new Uint8Array(w * 4);
+    init[sx * 4 + 0] = 1;
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    for (let i = 0; i < 2; i++) {
+      const tex = this._caTex[i];
+      if (!tex) continue;
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, w, 1, gl.RGBA_INTEGER, gl.UNSIGNED_BYTE, init);
+    }
+    this._caFront = 0;
   }
 
   /**
@@ -311,6 +366,7 @@ export class GpuSim {
     }
     if (this._caUpdate && this._caApply && this._caTex[0]) {
       this.caEnabled = true;
+      this.setCaSeed(this.caSeedX, this.caSeedY);
       return;
     }
 
@@ -331,6 +387,7 @@ export class GpuSim {
     await this._caLoading;
     if (!this._caUpdate || !this._caApply || !this._caTex[0]) throw new Error("Wolfram CA failed to initialize");
     this.caEnabled = true;
+    this.setCaSeed(this.caSeedX, this.caSeedY);
   }
 
   /**
@@ -410,8 +467,31 @@ export class GpuSim {
    */
   setWorldSize(width, height) {
     const gl = this.gl;
+    const prevW = this.width | 0;
+    const prevH = this.height | 0;
     this.width = width | 0;
     this.height = height | 0;
+    if (this.width > 0 && this.height > 0) {
+      if (prevW > 0 && prevH > 0) {
+        const ux = prevW <= 1 ? 0.5 : (this.caSeedX | 0) / (prevW - 1);
+        const uy = prevH <= 1 ? 0.5 : (this.caSeedY | 0) / (prevH - 1);
+        this.caSeedX = Math.round(ux * Math.max(0, this.width - 1)) | 0;
+        this.caSeedY = Math.round(uy * Math.max(0, this.height - 1)) | 0;
+      } else {
+        this.caSeedX = (this.width >> 1) | 0;
+        this.caSeedY = (this.height - 2) | 0;
+      }
+
+      // Clamp away from boundary walls / open top row.
+      const minX = this.width >= 3 ? 1 : 0;
+      const maxX = this.width >= 3 ? this.width - 2 : this.width - 1;
+      const minY = this.height >= 2 ? 1 : 0;
+      const maxY = this.height >= 3 ? this.height - 2 : this.height - 1;
+      this.caSeedX = Math.max(minX, Math.min(maxX, this.caSeedX | 0));
+      this.caSeedY = Math.max(minY, Math.min(maxY, this.caSeedY | 0));
+      this.caHasSeed = true;
+      this.caGen = 0;
+    }
 
     for (let i = 0; i < 2; i++) {
       if (this._stateTex[i]) gl.deleteTexture(this._stateTex[i]);
@@ -438,6 +518,7 @@ export class GpuSim {
   clear() {
     const gl = this.gl;
     this.tick = 0;
+    this.caGen = 0;
 
     // Avoid feedback loops by ensuring state textures aren't bound for sampling.
     gl.activeTexture(gl.TEXTURE0);
@@ -467,6 +548,8 @@ export class GpuSim {
     this._draw(program, this._worldFb[1], this.width, this.height);
     this._front = 0;
     this.tick = 0;
+
+    if (this._caTex[0]) this.setCaSeed(this.caSeedX, this.caSeedY);
   }
 
   /**
@@ -627,7 +710,10 @@ export class GpuSim {
     this._caFront = 1 - this._caFront;
   }
 
-  _caApplyPass() {
+  /**
+   * @param {number} emitY
+   */
+  _caApplyPass(emitY) {
     const ca = this._caApply;
     if (!ca) return;
     const caTex = this._caTex[this._caFront];
@@ -635,7 +721,7 @@ export class GpuSim {
 
     const gl = this.gl;
     const { program, u } = ca;
-    const emitY = Math.max(0, Math.min(this.height - 1, Math.max(1, this.height - 2)));
+    if (emitY < 0 || emitY >= this.height) return;
 
     gl.useProgram(program);
     gl.uniform2i(u.size, this.width, this.height);
@@ -751,8 +837,14 @@ export class GpuSim {
     if (this.caEnabled && this._caUpdate && this._caApply && this._caTex[0]) {
       const interval = Math.max(1, this.caInterval | 0);
       if (((this.tick >>> 0) % interval) === 0) {
+        let emitY = (this.caSeedY | 0) - (this.caGen | 0);
+        if (emitY < 1) {
+          this.setCaSeed(this.caSeedX, this.caSeedY);
+          emitY = this.caSeedY | 0;
+        }
+        this._caApplyPass(emitY);
         this._caUpdatePass();
-        this._caApplyPass();
+        this.caGen = (this.caGen + 1) | 0;
       }
     }
 
