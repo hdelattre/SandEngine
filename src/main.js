@@ -1657,7 +1657,8 @@ window.addEventListener("blur", () => {
 });
 
 function loop(now) {
-  let dtMs = now - lastNow;
+  const dtMsRaw = now - lastNow;
+  let dtMs = dtMsRaw;
   if (dtMs > 1000) {
     if (startupStepRamp) startupStepRamp.startNow += dtMs;
     dtMs = 0;
@@ -1686,7 +1687,7 @@ function loop(now) {
     brush.lastY = y1;
   }
 
-  const fpsDtMs = clamp(dtMs, 1, 2000);
+  const fpsDtMs = clamp(dtMsRaw, 1, 2000);
   const instFps = 1000 / fpsDtMs;
   // Exponential smoothing with a fixed time constant (so it converges quickly even at very low FPS)
   const fpsAlpha = 1 - Math.exp(-(fpsDtMs / 1000) / 0.5);
@@ -1808,7 +1809,6 @@ function loop(now) {
   sim.render();
   drawBrushCursor();
 
-  if (dtMs > 0 && dtMs <= 250) fps = fps * 0.9 + (1000 / Math.max(1, dtMs)) * 0.1;
   if (now - lastStatusNow > 180) {
     lastStatusNow = now;
     syncSimRateReadout();
