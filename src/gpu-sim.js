@@ -61,6 +61,8 @@ export class GpuSim {
     this.caSeedY = Math.max(1, (opts.height | 0) - 2);
     this.caGen = 0;
     this.caHasSeed = true;
+    // 0=down, 1=up, 2=left, 3=right
+    this.caDir = 0;
     /** @type {null | {program: WebGLProgram, u: Record<string, WebGLUniformLocation>}} */
     this._gol = null;
     /** @type {Promise<void> | null} */
@@ -277,7 +279,8 @@ export class GpuSim {
         size: mustGetUniform(gl, program, "u_size"),
         ambientTemp: mustGetUniform(gl, program, "u_ambientTemp"),
         paintId: mustGetUniform(gl, program, "u_paintId"),
-        emitY: mustGetUniform(gl, program, "u_emitY"),
+        emitAxis: mustGetUniform(gl, program, "u_emitAxis"),
+        emitPos: mustGetUniform(gl, program, "u_emitPos"),
       },
     };
   }
@@ -285,8 +288,10 @@ export class GpuSim {
   _ensureCaBuffers() {
     const gl = this.gl;
     const w = this.width | 0;
-    if (w <= 0) return;
-    if (this._caTex[0] && this._caWidth === w) return;
+    const h = this.height | 0;
+    const len = Math.max(w, h) | 0;
+    if (len <= 0) return;
+    if (this._caTex[0] && this._caWidth === len) return;
 
     for (let i = 0; i < 2; i++) {
       if (this._caTex[i]) gl.deleteTexture(this._caTex[i]);
@@ -295,16 +300,13 @@ export class GpuSim {
       this._caFb[i] = null;
     }
 
-    const init = new Uint8Array(w * 4);
+    const init = new Uint8Array(len * 4);
     const minX = w >= 3 ? 1 : 0;
     const maxX = w >= 3 ? w - 2 : w - 1;
-    const wantX = this.caHasSeed ? (this.caSeedX | 0) : (w >> 1);
-    const cx = Math.max(minX, Math.min(maxX, wantX));
-    init[cx * 4 + 0] = 1;
-    this.caSeedX = cx;
-    const h = this.height | 0;
     const minY = h >= 2 ? 1 : 0;
     const maxY = h >= 3 ? h - 2 : h - 1;
+
+    this.caSeedX = Math.max(minX, Math.min(maxX, this.caSeedX | 0));
     if (!this.caHasSeed) {
       this.caHasSeed = true;
       this.caSeedY = maxY;
@@ -313,15 +315,54 @@ export class GpuSim {
     }
     this.caGen = 0;
 
+    const activeLen = Math.max(0, this._caActiveLen() | 0);
+    const seedIdx = Math.max(0, Math.min(Math.max(0, activeLen - 1), this._caSeedIndex() | 0));
+    init[seedIdx * 4 + 0] = 1;
+
     for (let i = 0; i < 2; i++) {
-      const tex = createRgba8uiTexture(gl, { width: w, height: 1, data: init });
+      const tex = createRgba8uiTexture(gl, { width: len, height: 1, data: init });
       const fb = createFramebufferForTextures(gl, [tex]);
       this._caTex[i] = tex;
       this._caFb[i] = fb;
     }
 
     this._caFront = 0;
-    this._caWidth = w;
+    this._caWidth = len;
+  }
+
+  /**
+   * @returns {number}
+   */
+  _caActiveLen() {
+    const dir = this.caDir | 0;
+    return dir === 2 || dir === 3 ? (this.height | 0) : (this.width | 0);
+  }
+
+  /**
+   * 0=row (emitY), 1=column (emitX)
+   * @returns {0|1}
+   */
+  _caEmitAxis() {
+    const dir = this.caDir | 0;
+    return dir === 2 || dir === 3 ? 1 : 0;
+  }
+
+  /**
+   * Index into the 1D CA line for the current direction mode.
+   * @returns {number}
+   */
+  _caSeedIndex() {
+    const dir = this.caDir | 0;
+    return dir === 2 || dir === 3 ? (this.caSeedY | 0) : (this.caSeedX | 0);
+  }
+
+  /**
+   * Updates CA direction and restarts from the current seed.
+   * @param {number} dir 0=down,1=up,2=left,3=right
+   */
+  setCaDir(dir) {
+    this.caDir = dir & 3;
+    this.setCaSeed(this.caSeedX, this.caSeedY);
   }
 
   /**
@@ -346,17 +387,20 @@ export class GpuSim {
     this.caGen = 0;
     this.caHasSeed = true;
 
-    if (!this._caTex[0] || this._caWidth !== w) return;
+    const len = Math.max(w, h) | 0;
+    if (!this._caTex[0] || this._caWidth !== len) return;
 
     const gl = this.gl;
-    const init = new Uint8Array(w * 4);
-    init[sx * 4 + 0] = 1;
+    const init = new Uint8Array(len * 4);
+    const activeLen = Math.max(0, this._caActiveLen() | 0);
+    const seedIdx = Math.max(0, Math.min(Math.max(0, activeLen - 1), this._caSeedIndex() | 0));
+    init[seedIdx * 4 + 0] = 1;
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
     for (let i = 0; i < 2; i++) {
       const tex = this._caTex[i];
       if (!tex) continue;
       gl.bindTexture(gl.TEXTURE_2D, tex);
-      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, w, 1, gl.RGBA_INTEGER, gl.UNSIGNED_BYTE, init);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, len, 1, gl.RGBA_INTEGER, gl.UNSIGNED_BYTE, init);
     }
     this._caFront = 0;
   }
@@ -786,21 +830,23 @@ export class GpuSim {
     const { program, u } = ca;
 
     gl.useProgram(program);
-    gl.uniform1i(u.width, this.width | 0);
+    const activeLen = Math.max(0, this._caActiveLen() | 0);
+    gl.uniform1i(u.width, activeLen);
     gl.uniform1ui(u.rule, (this.caRule & 255) >>> 0);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, src);
     gl.uniform1i(u.ca, 0);
 
-    this._draw(program, dst, this.width, 1);
+    this._draw(program, dst, this._caWidth | 0, 1);
     this._caFront = 1 - this._caFront;
   }
 
   /**
-   * @param {number} emitY
+   * @param {0|1} emitAxis 0=row (emitY), 1=column (emitX)
+   * @param {number} emitPos
    */
-  _caApplyPass(emitY) {
+  _caApplyPass(emitAxis, emitPos) {
     const ca = this._caApply;
     if (!ca) return;
     const caTex = this._caTex[this._caFront];
@@ -808,13 +854,18 @@ export class GpuSim {
 
     const gl = this.gl;
     const { program, u } = ca;
-    if (emitY < 0 || emitY >= this.height) return;
+    if (emitAxis === 0) {
+      if (emitPos < 0 || emitPos >= this.height) return;
+    } else {
+      if (emitPos < 0 || emitPos >= this.width) return;
+    }
 
     gl.useProgram(program);
     gl.uniform2i(u.size, this.width, this.height);
     gl.uniform1ui(u.ambientTemp, this.ambientTemp >>> 0);
     gl.uniform1ui(u.paintId, (this.caPaintId & 255) >>> 0);
-    gl.uniform1i(u.emitY, emitY | 0);
+    gl.uniform1i(u.emitAxis, emitAxis);
+    gl.uniform1i(u.emitPos, emitPos | 0);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this._srcTex());
@@ -924,12 +975,22 @@ export class GpuSim {
     if (this.caEnabled && this._caUpdate && this._caApply && this._caTex[0]) {
       const interval = Math.max(1, this.caInterval | 0);
       if (((this.tick >>> 0) % interval) === 0) {
-        let emitY = (this.caSeedY | 0) - (this.caGen | 0);
-        if (emitY < 1) {
+        const dir = this.caDir | 0;
+        const axis = this._caEmitAxis();
+        let emitPos;
+        if (dir === 0) emitPos = (this.caSeedY | 0) - (this.caGen | 0); // down
+        else if (dir === 1) emitPos = (this.caSeedY | 0) + (this.caGen | 0); // up
+        else if (dir === 2) emitPos = (this.caSeedX | 0) - (this.caGen | 0); // left
+        else emitPos = (this.caSeedX | 0) + (this.caGen | 0); // right
+
+        const minPos = 1;
+        const maxPos = axis === 0 ? (this.height - 1) | 0 : Math.max(0, (this.width - 2) | 0);
+        if (emitPos < minPos || emitPos > maxPos) {
           this.setCaSeed(this.caSeedX, this.caSeedY);
-          emitY = this.caSeedY | 0;
+          emitPos = axis === 0 ? (this.caSeedY | 0) : (this.caSeedX | 0);
         }
-        this._caApplyPass(emitY);
+
+        this._caApplyPass(axis, emitPos);
         this._caUpdatePass();
         this.caGen = (this.caGen + 1) | 0;
       }

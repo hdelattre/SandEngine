@@ -115,6 +115,7 @@ const openEdges = /** @type {HTMLInputElement} */ (document.getElementById("open
 const caRule = /** @type {HTMLInputElement} */ (document.getElementById("caRule"));
 const caInterval = /** @type {HTMLInputElement} */ (document.getElementById("caInterval"));
 const caPaintSelect = /** @type {HTMLSelectElement} */ (document.getElementById("caPaintSelect"));
+const caDir = /** @type {HTMLSelectElement} */ (document.getElementById("caDir"));
 const caMode = /** @type {HTMLInputElement} */ (document.getElementById("caMode"));
 const golMode = /** @type {HTMLInputElement} */ (document.getElementById("golMode"));
 const golRateControl = /** @type {HTMLElement} */ (document.getElementById("golRateControl"));
@@ -1123,6 +1124,8 @@ sim.caInterval = Math.max(1, Number(caInterval.value) | 0);
 caInterval.value = String(sim.caInterval);
 sim.caPaintId = Number(caPaintSelect.value) | 0;
 caPaintSelect.value = String(sim.caPaintId);
+sim.caDir = Number(caDir.value) & 3;
+caDir.value = String(sim.caDir);
 
 caMode.checked = sim.caEnabled;
 caMode.addEventListener("change", async () => {
@@ -1141,6 +1144,9 @@ caMode.addEventListener("change", async () => {
 
 caPaintSelect.addEventListener("change", () => {
   sim.caPaintId = Number(caPaintSelect.value) | 0;
+});
+caDir.addEventListener("change", () => {
+  sim.setCaDir(Number(caDir.value) | 0);
 });
 
 sim.golInterval = Math.max(1, Number(golRate.value) | 0);

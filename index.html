@@ -166,6 +166,15 @@
               <span>CA paint</span>
               <select id="caPaintSelect"></select>
             </label>
+            <label class="control control--select" title="Direction to extend generations from the seed">
+              <span>CA direction</span>
+              <select id="caDir">
+                <option value="0">Down</option>
+                <option value="1">Up</option>
+                <option value="2">Left</option>
+                <option value="3">Right</option>
+              </select>
+            </label>
             <label class="control control--range" title="How often to advance the cellular automaton">
               <span>CA interval</span>
               <input id="caInterval" type="range" min="1" max="32" step="1" value="1" />

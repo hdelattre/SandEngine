@@ -47,7 +47,8 @@ uniform usampler2D u_latent;
 uniform ivec2 u_size;
 uniform uint u_ambientTemp;
 uniform uint u_paintId;
-uniform int u_emitY;
+uniform int u_emitAxis; // 0=row (emitY), 1=column (emitX)
+uniform int u_emitPos;
 
 layout(location = 0) out uvec4 outState;
 layout(location = 1) out uvec4 outEnergy;
@@ -146,13 +147,29 @@ void main() {
   uvec4 cur = texelFetch(u_state, c, 0);
   uvec4 curE = texelFetch(u_energy, c, 0);
 
-  if (u_paintId == P_EMPTY || c.y != u_emitY) {
+  if (u_paintId == P_EMPTY) {
     outState = cur;
     outEnergy = curE;
     return;
   }
 
-  uint bit = texelFetch(u_ca, ivec2(c.x, 0), 0).r & 1u;
+  int axis = u_emitAxis;
+  if (axis == 0) {
+    if (c.y != u_emitPos) {
+      outState = cur;
+      outEnergy = curE;
+      return;
+    }
+  } else {
+    if (c.x != u_emitPos) {
+      outState = cur;
+      outEnergy = curE;
+      return;
+    }
+  }
+
+  int idx = (axis == 0) ? c.x : c.y;
+  uint bit = texelFetch(u_ca, ivec2(idx, 0), 0).r & 1u;
   if (bit == 0u || cur.r != P_EMPTY) {
     outState = cur;
     outEnergy = curE;
@@ -164,4 +181,3 @@ void main() {
   outEnergy = packEnergy(energyForTemp(s.r, s.g));
 }
 `;
-
