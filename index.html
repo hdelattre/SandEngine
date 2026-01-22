@@ -109,33 +109,38 @@
             <span>Res</span>
             <select id="resSelect"></select>
           </label>
-          <label class="control control--range" title="Wolfram rule number (0–255)">
-            <span>CA rule</span>
-            <input id="caRule" type="range" min="0" max="255" step="1" value="30" />
-            <output class="control__value" id="caRuleValue">30</output>
-          </label>
-          <label class="control control--range" title="How often to advance the cellular automaton">
-            <span>CA interval</span>
-            <input id="caInterval" type="range" min="1" max="32" step="1" value="1" />
-            <output class="control__value" id="caIntervalValue">every tick</output>
-          </label>
-          <label class="control control--select" title="Particle to emit when the CA bit is 1">
-            <span>CA paint</span>
-            <select id="caPaintSelect"></select>
-          </label>
-          <label class="control control--toggle" title="Run a 1D Wolfram cellular automaton emitter">
-            <span>Wolfram CA</span>
-            <input id="caMode" class="toggle" type="checkbox" aria-label="Wolfram cellular automaton" />
-          </label>
-          <label id="golRateControl" class="control control--range" title="How often to apply the Game of Life pass">
-            <span>GoL interval</span>
-            <input id="golRate" type="range" min="1" max="32" step="1" value="1" />
-            <output class="control__value" id="golRateValue">every tick</output>
-          </label>
-          <label class="control control--toggle" title="Run a Game of Life pass every tick">
-            <span>Game of Life</span>
-            <input id="golMode" class="toggle" type="checkbox" aria-label="Game of Life" />
-          </label>
+          <!-- CA rule moved into the Wolfram CA group below -->
+          <div class="panelGroup panelGroup--gol">
+            <label class="control control--toggle" title="Run a Game of Life pass every tick">
+              <span>Game of Life</span>
+              <input id="golMode" class="toggle" type="checkbox" aria-label="Game of Life" />
+            </label>
+            <label id="golRateControl" class="control control--range" title="How often to apply the Game of Life pass">
+              <span>GoL interval</span>
+              <input id="golRate" type="range" min="1" max="32" step="1" value="1" />
+              <output class="control__value" id="golRateValue">every tick</output>
+            </label>
+          </div>
+          <div class="panelGroup panelGroup--ca">
+            <label class="control control--toggle" title="Run a 1D Wolfram cellular automaton emitter">
+              <span>Wolfram CA</span>
+              <input id="caMode" class="toggle" type="checkbox" aria-label="Wolfram cellular automaton" />
+            </label>
+            <label class="control control--range" title="Wolfram rule number (0–255)">
+              <span>CA rule</span>
+              <input id="caRule" type="range" min="0" max="255" step="1" value="30" />
+              <output class="control__value" id="caRuleValue">30</output>
+            </label>
+            <label class="control control--select" title="Particle to emit when the CA bit is 1">
+              <span>CA paint</span>
+              <select id="caPaintSelect"></select>
+            </label>
+            <label class="control control--range" title="How often to advance the cellular automaton">
+              <span>CA interval</span>
+              <input id="caInterval" type="range" min="1" max="32" step="1" value="1" />
+              <output class="control__value" id="caIntervalValue">every tick</output>
+            </label>
+          </div>
         </div>
         <div class="panelHints" aria-label="Hints">
           <div class="hint__small" id="levelHint"></div>

@@ -179,7 +179,9 @@ body {
 }
 
 .panelGroup--paste,
-.panelGroup--stamp {
+.panelGroup--stamp,
+.panelGroup--gol,
+.panelGroup--ca {
   grid-column: 1 / -1;
 }
 
@@ -196,6 +198,23 @@ body {
 
 .panelGroup--paste > .control {
   min-width: 0;
+}
+
+.panelGroup--gol > .control--toggle {
+  flex: 0 0 auto;
+}
+
+.panelGroup--gol {
+  flex-wrap: nowrap;
+}
+
+.panelGroup--gol > .control--range {
+  flex: 1 1 auto;
+  min-width: 220px;
+}
+
+.panelGroup--ca > .control--toggle {
+  flex: 0 0 auto;
 }
 
 .panelRow {
