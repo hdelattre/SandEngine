@@ -106,6 +106,10 @@ uvec4 packEnergy(uint e) {
   return uvec4(e & 255u, (e >> 8u) & 255u, 0u, 0u);
 }
 
+uvec4 packEnergyKeepBA(uint e, uvec2 ba) {
+  return uvec4(e & 255u, (e >> 8u) & 255u, ba.x, ba.y);
+}
+
 uvec4 makeCell(uint id, uint temp) {
   uint data = 0u;
   uint meta = 0u;
@@ -183,7 +187,7 @@ void main() {
     }
     uvec4 s = uvec4(P_EMPTY, cur.g, 0u, 0u);
     outState = s;
-    outEnergy = packEnergy(energyForTemp(s.r, s.g));
+    outEnergy = packEnergyKeepBA(energyForTemp(s.r, s.g), curE.ba);
     return;
   }
 
@@ -202,7 +206,7 @@ void main() {
     // Spawn the chosen neighbor's material, but with clean default metadata for that id.
     uvec4 s = makeCell(born.r, born.g);
     outState = s;
-    outEnergy = packEnergy(energyForTemp(s.r, s.g));
+    outEnergy = packEnergyKeepBA(energyForTemp(s.r, s.g), curE.ba);
     return;
   }
 

@@ -79,8 +79,21 @@ uvec4 packEnergy(uint e) {
   return uvec4(e & 255u, (e >> 8u) & 255u, 0u, 0u);
 }
 
+uvec4 packEnergyKeepBA(uint e, uvec2 ba) {
+  return uvec4(e & 255u, (e >> 8u) & 255u, ba.x, ba.y);
+}
+
 uint clampU8(int v) {
   return uint(v < 0 ? 0 : (v > 255 ? 255 : v));
+}
+
+vec2 decodeComplex(uvec2 ba) {
+  return (vec2(ba) - 128.0) / 128.0;
+}
+
+uvec2 encodeComplex(vec2 z) {
+  vec2 s = clamp(z, -1.0, 1.0) * 128.0 + 128.0;
+  return uvec2(clampU8(int(s.x + 0.5)), clampU8(int(s.y + 0.5)));
 }
 
 uint tempFromEnergy(uint id, uint e) {
@@ -129,6 +142,20 @@ void main() {
   uint bId = b.r;
   uint aE = unpackEnergy(aE4);
   uint bE = unpackEnergy(bE4);
+  uvec2 aBA = aE4.ba;
+  uvec2 bBA = bE4.ba;
+
+  // Auxiliary field diffusion (energy BA): smooths a 2D vector stored as a complex number.
+  vec2 wa = decodeComplex(aBA);
+  vec2 wb = decodeComplex(bBA);
+  vec2 dw = wb - wa;
+  float k = 0.06;
+  wa += dw * k;
+  wb -= dw * k;
+  wa *= 0.999;
+  wb *= 0.999;
+  aBA = encodeComplex(wa);
+  bBA = encodeComplex(wb);
 
   uvec4 aP = loadProps(aId);
   uvec4 bP = loadProps(bId);
@@ -167,7 +194,7 @@ void main() {
   b.g = clampU8(int(tempFromEnergy(bId, bE)));
 
   outState = aIsHere ? a : b;
-  outEnergy = aIsHere ? packEnergy(aE) : packEnergy(bE);
+  outEnergy = aIsHere ? packEnergyKeepBA(aE, aBA) : packEnergyKeepBA(bE, bBA);
 }
 `;
 
@@ -226,7 +253,8 @@ uint energyForTemp(uint id, uint temp) {
 }
 
 uvec4 packEnergy(uint e) {
-  return uvec4(e & 255u, (e >> 8u) & 255u, 0u, 0u);
+  // RG holds the 16-bit thermal energy; BA is reserved for auxiliary per-cell fields.
+  return uvec4(e & 255u, (e >> 8u) & 255u, 128u, 128u);
 }
 
 void main() {
@@ -424,6 +452,10 @@ uvec4 packEnergy(uint e) {
   return uvec4(e & 255u, (e >> 8u) & 255u, 0u, 0u);
 }
 
+uvec4 packEnergyKeepBA(uint e, uvec2 ba) {
+  return uvec4(e & 255u, (e >> 8u) & 255u, ba.x, ba.y);
+}
+
 uint latentFusion(uint id) {
   uvec4 t = texelFetch(u_latent, ivec2(int(id), 0), 0);
   return unpackU16(t.rg);
@@ -537,6 +569,31 @@ void removeHeat(inout uint e, uint id, uint dT) {
 
 uint clampU8(int v) {
   return uint(v < 0 ? 0 : (v > 255 ? 255 : v));
+}
+
+vec2 decodeComplex(uvec2 ba) {
+  return (vec2(ba) - 128.0) / 128.0;
+}
+
+uvec2 encodeComplex(vec2 z) {
+  vec2 s = clamp(z, -1.0, 1.0) * 128.0 + 128.0;
+  return uvec2(clampU8(int(s.x + 0.5)), clampU8(int(s.y + 0.5)));
+}
+
+float hotAt(ivec2 c) {
+  if (!inBounds(c)) return 0.0;
+  uvec4 s = loadState(c);
+  float t = (float(s.g) - float(u_ambientTemp)) / 128.0;
+  return clamp(t, 0.0, 1.0);
+}
+
+vec2 curlHot(ivec2 c) {
+  float hl = hotAt(c + ivec2(-1, 0));
+  float hr = hotAt(c + ivec2(1, 0));
+  float hd = hotAt(c + ivec2(0, -1));
+  float hu = hotAt(c + ivec2(0, 1));
+  vec2 grad = vec2(hr - hl, hu - hd);
+  return vec2(-grad.y, grad.x);
 }
 
 uint hashU32(uint x) {
@@ -1276,10 +1333,17 @@ void main() {
     return;
   }
 
-  uvec4 a = loadState(aC);
-  uvec4 b = loadState(bC);
-  uint aE = unpackEnergy(loadEnergy(aC));
-  uint bE = unpackEnergy(loadEnergy(bC));
+	  uvec4 a = loadState(aC);
+	  uvec4 b = loadState(bC);
+		  uvec4 aE4 = loadEnergy(aC);
+		  uvec4 bE4 = loadEnergy(bC);
+		  uvec2 aBA = aE4.ba;
+		  uvec2 bBA = bE4.ba;
+		  uint aE = unpackEnergy(aE4);
+		  uint bE = unpackEnergy(bE4);
+		  vec2 windA = decodeComplex(aBA);
+		  vec2 windB = decodeComplex(bBA);
+		  vec2 windAvg = 0.5 * (windA + windB);
 
   if (u_selfStep != 0) {
     selfUpdate(aC, a, aE, 11u + u_passSalt);
@@ -1918,15 +1982,22 @@ void main() {
             // Keep newly-ignited flames anchored so they can spread into adjacent fuel.
           }
           // Prevent "falling sideways": only allow diagonal fall if straight-down is blocked.
-          else if (diagonalPass && canFallDown(aC, aId, aP, aF)) {
-            // no swap
-          } else {
-            uint r = randByte(uvec2(aC), 251u + u_passSalt);
-            if (r < aP.a) {
-              uvec4 tmp = a;
-              a = b;
-              b = tmp;
-              uint tmpE = aE;
+	          else if (diagonalPass && canFallDown(aC, aId, aP, aF)) {
+	            // no swap
+	          } else {
+	            uint prob = aP.a;
+	            if (diagonalPass) {
+	              float align = clamp(windAvg.x * float(u_dir.x), -1.0, 1.0);
+	              float response = hasFlag(aF, FLAG_LIQUID) ? 1.0 : (hasFlag(aF, FLAG_GAS) || hasFlag(aF, FLAG_ENERGY)) ? 0.75 : hasFlag(aF, FLAG_POWDER) ? 0.25 : 0.0;
+	              float mult = 1.0 + 0.35 * response * align;
+	              prob = uint(clamp(float(prob) * mult, 0.0, 255.0));
+	            }
+	            uint r = randByte(uvec2(aC), 251u + u_passSalt);
+	            if (r < prob) {
+	              uvec4 tmp = a;
+	              a = b;
+	              b = tmp;
+	              uint tmpE = aE;
               aE = bE;
               bE = tmpE;
             }
@@ -1950,14 +2021,17 @@ void main() {
             // no sideways move while falling
           } else {
             uint headFrom = columnMass2(bC);
-            uint headTo = columnMass2(aC);
-            int hd = int(headFrom) - int(headTo);
-            uint base = bP.a;
-            uint prob = (hd > 0) ? base : ((hd == 0) ? ((base * 3u) >> 2) : (base >> 2));
-            uint r = randByte(uvec2(aC), 93u + u_passSalt);
-            if (r < prob) {
-              uvec4 tmp = a;
-              a = b;
+	            uint headTo = columnMass2(aC);
+	            int hd = int(headFrom) - int(headTo);
+	            uint base = bP.a;
+	            uint prob = (hd > 0) ? base : ((hd == 0) ? ((base * 3u) >> 2) : (base >> 2));
+	            float align = clamp(-windAvg.x, -1.0, 1.0);
+	            float mult = 1.0 + 0.6 * align;
+	            prob = uint(clamp(float(prob) * mult, 0.0, 255.0));
+	            uint r = randByte(uvec2(aC), 93u + u_passSalt);
+	            if (r < prob) {
+	              uvec4 tmp = a;
+	              a = b;
               b = tmp;
               uint tmpE = aE;
               aE = bE;
@@ -1969,14 +2043,17 @@ void main() {
             // no sideways move while falling
           } else {
             uint headFrom = columnMass2(aC);
-            uint headTo = columnMass2(bC);
-            int hd = int(headFrom) - int(headTo);
-            uint base = aP.a;
-            uint prob = (hd > 0) ? base : ((hd == 0) ? ((base * 3u) >> 2) : (base >> 2));
-            uint r = randByte(uvec2(aC), 91u + u_passSalt);
-            if (r < prob) {
-              uvec4 tmp = a;
-              a = b;
+	            uint headTo = columnMass2(bC);
+	            int hd = int(headFrom) - int(headTo);
+	            uint base = aP.a;
+	            uint prob = (hd > 0) ? base : ((hd == 0) ? ((base * 3u) >> 2) : (base >> 2));
+	            float align = clamp(windAvg.x, -1.0, 1.0);
+	            float mult = 1.0 + 0.6 * align;
+	            prob = uint(clamp(float(prob) * mult, 0.0, 255.0));
+	            uint r = randByte(uvec2(aC), 91u + u_passSalt);
+	            if (r < prob) {
+	              uvec4 tmp = a;
+	              a = b;
               b = tmp;
               uint tmpE = aE;
               aE = bE;
@@ -1984,24 +2061,34 @@ void main() {
             }
           }
         } else {
-          // Non-liquid fluids diffuse more gently (mainly into air).
-          if (aId == P_EMPTY && !bPowder && isFluid(bF) && bId != P_EMPTY && !(bId == P_FIRE && bMeta != 0u)) {
-            uint r = randByte(uvec2(aC), 91u + u_passSalt);
-            if (r < (bP.a >> 1)) {
-              uvec4 tmp = a;
-              a = b;
-              b = tmp;
-              uint tmpE = aE;
+	          // Non-liquid fluids diffuse more gently (mainly into air).
+	          if (aId == P_EMPTY && !bPowder && isFluid(bF) && bId != P_EMPTY && !(bId == P_FIRE && bMeta != 0u)) {
+	            uint prob = (bP.a >> 1);
+	            float align = clamp(-windAvg.x, -1.0, 1.0);
+	            float response = (hasFlag(bF, FLAG_GAS) || hasFlag(bF, FLAG_ENERGY)) ? 1.0 : 0.4;
+	            float mult = 1.0 + 0.5 * response * align;
+	            prob = uint(clamp(float(prob) * mult, 0.0, 255.0));
+	            uint r = randByte(uvec2(aC), 91u + u_passSalt);
+	            if (r < prob) {
+	              uvec4 tmp = a;
+	              a = b;
+	              b = tmp;
+	              uint tmpE = aE;
               aE = bE;
               bE = tmpE;
             }
-          } else if (bId == P_EMPTY && !aPowder && isFluid(aF) && aId != P_EMPTY && !(aId == P_FIRE && aMeta != 0u)) {
-            uint r = randByte(uvec2(aC), 93u + u_passSalt);
-            if (r < (aP.a >> 1)) {
-              uvec4 tmp = a;
-              a = b;
-              b = tmp;
-              uint tmpE = aE;
+	          } else if (bId == P_EMPTY && !aPowder && isFluid(aF) && aId != P_EMPTY && !(aId == P_FIRE && aMeta != 0u)) {
+	            uint prob = (aP.a >> 1);
+	            float align = clamp(windAvg.x, -1.0, 1.0);
+	            float response = (hasFlag(aF, FLAG_GAS) || hasFlag(aF, FLAG_ENERGY)) ? 1.0 : 0.4;
+	            float mult = 1.0 + 0.5 * response * align;
+	            prob = uint(clamp(float(prob) * mult, 0.0, 255.0));
+	            uint r = randByte(uvec2(aC), 93u + u_passSalt);
+	            if (r < prob) {
+	              uvec4 tmp = a;
+	              a = b;
+	              b = tmp;
+	              uint tmpE = aE;
               aE = bE;
               bE = tmpE;
             }
@@ -2009,11 +2096,48 @@ void main() {
         }
       }
     }
-  }
+	  }
 
-  outState = aIsHere ? a : b;
-  outEnergy = aIsHere ? packEnergy(aE) : packEnergy(bE);
-}
+	  // Update the auxiliary complex field once per tick (during the selfStep pass).
+	  if (u_selfStep != 0) {
+	    vec2 wa = decodeComplex(aBA);
+	    vec2 wb = decodeComplex(bBA);
+
+	    float hotA = clamp((float(a.g) - float(u_ambientTemp)) / 128.0, 0.0, 1.0);
+	    float hotB = clamp((float(b.g) - float(u_ambientTemp)) / 128.0, 0.0, 1.0);
+
+	    // Complex-plane rotation: z *= (1 + i*rot) (small-angle spin, no trig).
+	    float rotA = 0.02 + 0.06 * hotA;
+	    float rotB = 0.02 + 0.06 * hotB;
+	    wa = wa + rotA * vec2(-wa.y, wa.x);
+	    wb = wb + rotB * vec2(-wb.y, wb.x);
+
+	    // Curl injection from local temperature gradients (hot regions stir the field).
+	    wa += curlHot(aC) * (0.06 * hotA);
+	    wb += curlHot(bC) * (0.06 * hotB);
+
+	    // Tiny noise so the field can bootstrap from zero even in a cold, static world.
+	    vec2 nA = vec2(float(randByte(uvec2(aC), 911u + u_passSalt)) - 128.0, float(randByte(uvec2(aC), 913u + u_passSalt)) - 128.0) / 128.0;
+	    vec2 nB = vec2(float(randByte(uvec2(bC), 915u + u_passSalt)) - 128.0, float(randByte(uvec2(bC), 917u + u_passSalt)) - 128.0) / 128.0;
+	    wa += nA * 0.0015;
+	    wb += nB * 0.0015;
+
+	    uint aF2 = loadProps(a.r).b;
+	    uint bF2 = loadProps(b.r).b;
+	    float dampA = hasFlag(aF2, FLAG_LIQUID) ? 0.992 : (hasFlag(aF2, FLAG_POWDER) ? 0.994 : 0.996);
+	    float dampB = hasFlag(bF2, FLAG_LIQUID) ? 0.992 : (hasFlag(bF2, FLAG_POWDER) ? 0.994 : 0.996);
+	    if (hasFlag(aF2, FLAG_IMMOVABLE)) dampA = 0.990;
+	    if (hasFlag(bF2, FLAG_IMMOVABLE)) dampB = 0.990;
+	    wa *= dampA;
+	    wb *= dampB;
+
+	    aBA = encodeComplex(wa);
+	    bBA = encodeComplex(wb);
+	  }
+
+		  outState = aIsHere ? a : b;
+		  outEnergy = aIsHere ? packEnergyKeepBA(aE, aBA) : packEnergyKeepBA(bE, bBA);
+		}
 `;
 
 export const PAINT_FRAG = `#version 300 es
@@ -2095,6 +2219,10 @@ uint energyForTemp(uint id, uint temp) {
 
 uvec4 packEnergy(uint e) {
   return uvec4(e & 255u, (e >> 8u) & 255u, 0u, 0u);
+}
+
+uvec4 packEnergyKeepBA(uint e, uvec2 ba) {
+  return uvec4(e & 255u, (e >> 8u) & 255u, ba.x, ba.y);
 }
 
 uint hashU32(uint x) {
@@ -2248,7 +2376,7 @@ void main() {
     }
 
     outState = s;
-    outEnergy = packEnergy(energyForTemp(s.r, s.g));
+    outEnergy = packEnergyKeepBA(energyForTemp(s.r, s.g), curE.ba);
   }
   else {
     outState = cur;
@@ -2351,6 +2479,10 @@ uvec4 packEnergy(uint e) {
   return uvec4(e & 255u, (e >> 8u) & 255u, 0u, 0u);
 }
 
+uvec4 packEnergyKeepBA(uint e, uvec2 ba) {
+  return uvec4(e & 255u, (e >> 8u) & 255u, ba.x, ba.y);
+}
+
 uvec4 makeCell(uint id) {
   uint temp = u_ambientTemp;
   uint data = 0u;
@@ -2433,7 +2565,7 @@ void main() {
     } else {
       uvec4 s = makeCell(P_EMPTY);
       outState = s;
-      outEnergy = packEnergy(energyForTemp(s.r, s.g));
+      outEnergy = packEnergyKeepBA(energyForTemp(s.r, s.g), curE.ba);
     }
     return;
   }
@@ -2446,7 +2578,7 @@ void main() {
     } else {
       uvec4 s = makeCell(P_STONE);
       outState = s;
-      outEnergy = packEnergy(energyForTemp(s.r, s.g));
+      outEnergy = packEnergyKeepBA(energyForTemp(s.r, s.g), curE.ba);
     }
     return;
   }
@@ -2489,7 +2621,7 @@ void main() {
       } else {
         uvec4 s = makeCell(P_STONE);
         outState = s;
-        outEnergy = packEnergy(energyForTemp(s.r, s.g));
+        outEnergy = packEnergyKeepBA(energyForTemp(s.r, s.g), curE.ba);
       }
       return;
     }
@@ -2506,12 +2638,12 @@ void main() {
     } else {
       uvec4 s = makeCell(id);
       outState = s;
-      outEnergy = packEnergy(energyForTemp(s.r, s.g));
+      outEnergy = packEnergyKeepBA(energyForTemp(s.r, s.g), curE.ba);
     }
   } else {
     uvec4 s = makeCell(id);
     outState = s;
-    outEnergy = packEnergy(energyForTemp(s.r, s.g));
+    outEnergy = packEnergyKeepBA(energyForTemp(s.r, s.g), curE.ba);
   }
 }
 `;

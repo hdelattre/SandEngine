@@ -116,6 +116,10 @@ uvec4 packEnergy(uint e) {
   return uvec4(e & 255u, (e >> 8u) & 255u, 0u, 0u);
 }
 
+uvec4 packEnergyKeepBA(uint e, uvec2 ba) {
+  return uvec4(e & 255u, (e >> 8u) & 255u, ba.x, ba.y);
+}
+
 uvec4 makeCell(uint id) {
   uint temp = u_ambientTemp;
   uint data = 0u;
@@ -178,6 +182,6 @@ void main() {
 
   uvec4 s = makeCell(u_paintId);
   outState = s;
-  outEnergy = packEnergy(energyForTemp(s.r, s.g));
+  outEnergy = packEnergyKeepBA(energyForTemp(s.r, s.g), curE.ba);
 }
 `;
