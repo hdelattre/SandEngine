@@ -549,6 +549,16 @@ uint botStepDir8(ivec2 c, uint dir16) {
   return t == 0u ? base : next;
 }
 
+uint botTurnOffset(int i) {
+  if (i == 0) return 1u;
+  if (i == 1) return 7u;
+  if (i == 2) return 2u;
+  if (i == 3) return 6u;
+  if (i == 4) return 3u;
+  if (i == 5) return 5u;
+  return 4u;
+}
+
 bool botPassable(uint id) {
   if (id == P_EMPTY) return true;
   uint f = loadProps(id).b;
@@ -1039,16 +1049,18 @@ void selfUpdate(ivec2 c, inout uvec4 s, inout uint e, uint salt) {
 
     bool blocked = (drill == 0u) && !botCanMove(c, dir);
     if (blocked && cd == 0u) {
-      uint cw = (dir + 1u) & 15u;
-      uint ccw = (dir + 15u) & 15u;
-      uint pref = cw;
-      uint alt = ccw;
-      uint back = (dir + 8u) & 15u;
-
-      if (botCanMove(c, pref)) dir = pref;
-      else if (botCanMove(c, alt)) dir = alt;
-      else dir = back;
-
+      // When blocked, snap to a passable 8-way direction (even dir16)
+      // so we don't dither into a blocked neighbor.
+      uint base8 = botBaseDir8(dir);
+      uint chosen8 = (base8 + 4u) & 7u;
+      for (int i = 0; i < 7; i++) {
+        uint d8 = (base8 + botTurnOffset(i)) & 7u;
+        if (botCanMoveDir8(c, d8)) {
+          chosen8 = d8;
+          break;
+        }
+      }
+      dir = (chosen8 << 1u) & 15u;
       cd = 1u;
     }
 
