@@ -375,8 +375,17 @@ function enqueuePaintCircle(x, y, cell, radius, opts) {
  */
 function setSelectedParticle(id) {
   const nextId = id | 0;
+  if (activeLevel.id !== LEVEL_ID.SANDBOX) {
+    const allowed = activeLevel.allowedPaintIds ?? [];
+    if (!allowed.includes(nextId)) {
+      const fallback = allowed[0] ?? Particle.STONE;
+      particleSelect.value = String(fallback);
+      syncParticleUi();
+      return;
+    }
+  }
   particleSelect.value = String(nextId);
-  pushRecentParticle(nextId);
+  if (activeLevel.id === LEVEL_ID.SANDBOX) pushRecentParticle(nextId);
   syncParticleUi();
 }
 
@@ -405,6 +414,10 @@ const recentParticles = [Particle.SAND, Particle.WATER, Particle.STONE, Particle
 /** @type {StampState[]} */
 const recentStamps = [];
 
+const HOTBAR_MAX_COMPACT = 6;
+const HOTBAR_MAX_DEFAULT = 8;
+const RECENT_PARTICLES_MAX = HOTBAR_MAX_DEFAULT;
+
 /**
  * @param {number} id
  */
@@ -413,7 +426,7 @@ function pushRecentParticle(id) {
   const idx = recentParticles.indexOf(id);
   if (idx >= 0) recentParticles.splice(idx, 1);
   recentParticles.unshift(id);
-  if (recentParticles.length > 12) recentParticles.length = 12;
+  if (recentParticles.length > RECENT_PARTICLES_MAX) recentParticles.length = RECENT_PARTICLES_MAX;
   buildHotbar();
 }
 
@@ -422,21 +435,13 @@ function wantsCompactHotbar() {
 }
 
 function hotbarParticleIds() {
-  if (wantsCompactHotbar()) return recentParticles.slice(0, 6);
-  return [
-    Particle.SAND,
-    Particle.WATER,
-    Particle.STONE,
-    Particle.DIRT,
-    Particle.MUD,
-    Particle.OIL,
-    Particle.PLANT,
-    Particle.FIRE,
-    Particle.SMOKE,
-    Particle.STEAM,
-    Particle.LAVA,
-    Particle.ACID,
-  ];
+  if (activeLevel.id !== LEVEL_ID.SANDBOX) {
+    const allowed = activeLevel.allowedPaintIds ?? [];
+    return wantsCompactHotbar() ? allowed.slice(0, HOTBAR_MAX_COMPACT) : allowed.slice(0, HOTBAR_MAX_DEFAULT);
+  }
+
+  if (wantsCompactHotbar()) return recentParticles.slice(0, HOTBAR_MAX_COMPACT);
+  return [Particle.SAND, Particle.WATER, Particle.STONE, Particle.DIRT, Particle.MUD, Particle.OIL, Particle.PLANT, Particle.FIRE];
 }
 
 /**
@@ -521,7 +526,8 @@ function syncParticleGrid() {
   const q = particleSearch.value.trim().toLowerCase();
   const current = Number(particleSelect.value) | 0;
   particleGrid.replaceChildren();
-  for (const id of Object.values(Particle)) {
+  const ids = activeLevel.id === LEVEL_ID.SANDBOX ? Object.values(Particle) : (activeLevel.allowedPaintIds ?? []);
+  for (const id of ids) {
     const def = particleDefs[id];
     if (!def || !def.name) continue;
     if (q && !def.name.toLowerCase().includes(q)) continue;
@@ -541,6 +547,25 @@ function syncParticleGrid() {
     });
     particleGrid.appendChild(btn);
   }
+}
+
+function syncParticleSelectOptions() {
+  const ids = activeLevel.id === LEVEL_ID.SANDBOX ? Object.values(Particle) : (activeLevel.allowedPaintIds ?? []);
+  const current = Number(particleSelect.value) | 0;
+
+  particleSelect.replaceChildren();
+  for (const id of ids) {
+    const def = particleDefs[id];
+    if (!def || !def.name) continue;
+    const opt = document.createElement("option");
+    opt.value = String(def.id);
+    opt.textContent = def.name;
+    particleSelect.appendChild(opt);
+  }
+
+  const next = ids.includes(current) ? current : (ids[0] ?? Particle.STONE);
+  particleSelect.value = String(next);
+  syncParticleUi();
 }
 
 particleSelect.addEventListener("change", () => syncParticleUi());
@@ -1396,7 +1421,7 @@ function setActiveLevel(levelId) {
   remainingBudget = typeof next.budget === "number" ? next.budget : null;
 
   const isSandbox = next.id === LEVEL_ID.SANDBOX;
-  const canPickParticles = isSandbox || next.id === LEVEL_ID.CIRCUIT_LAB;
+  const canPickParticles = true;
 
   levelSelect.value = next.id;
   particleSelect.disabled = !canPickParticles;
@@ -1416,10 +1441,10 @@ function setActiveLevel(levelId) {
   else syncStampInputsFromState();
   clearBtn.textContent = isSandbox ? "Clear" : "Restart";
   levelHintEl.textContent = isSandbox ? "" : next.hints.join(" ");
+  syncParticleSelectOptions();
+  buildHotbar();
 
   if (isSandbox) {
-    particleSelect.value = String(Particle.SAND);
-    syncParticleUi();
     const { width, height } = parseRes(resSelect.value);
     if (sim.width !== width || sim.height !== height) sim.setWorldSize(width, height);
     else sim.clear();
@@ -1441,9 +1466,6 @@ function setActiveLevel(levelId) {
 
   const { source, width, height, originX, originY } = next.buildStamp();
   sim.stampImage(source, width, height, originX, originY, { edgeStone: false, addMode: false });
-
-  particleSelect.value = String(next.allowedPaintIds[0] ?? Particle.STONE);
-  syncParticleUi();
 }
 
 setActiveLevel(levelSelect.value);
@@ -1925,7 +1947,6 @@ window.addEventListener("keydown", (e) => {
   };
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
   if (k in hotkeys) {
-    if (activeLevel.id !== LEVEL_ID.SANDBOX && activeLevel.id !== LEVEL_ID.CIRCUIT_LAB) return;
     setSelectedParticle(hotkeys[k]);
   }
 });
