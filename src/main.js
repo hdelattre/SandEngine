@@ -597,7 +597,8 @@ function forEachLinePoint(x0, y0, x1, y1, fn) {
  * @param {0|1|2|3|null} [agentDir]
  */
 function paintAt(x, y, mode, agentDir) {
-  const radius = Number(brushSize.value) | 0;
+  const radiusUi = Number(brushSize.value) | 0;
+  const radius = Math.max(0, radiusUi - 1);
   const inLevel = activeLevel.id !== LEVEL_ID.SANDBOX;
 
   let id = mode === "erase" ? Particle.EMPTY : Number(particleSelect.value) | 0;
@@ -2021,13 +2022,34 @@ function drawBrushCursor() {
     return;
   }
 
-  const radius = Number(brushSize.value) | 0;
-  if (radius <= 0) return;
+  const radiusUi = Number(brushSize.value) | 0;
+  const radius = Math.max(0, radiusUi - 1);
 
   const rx = (radius + 0.5) * sx;
   const ry = (radius + 0.5) * sy;
 
   const color = brush.down && brush.mode === "erase" ? "rgba(255, 96, 96, 0.45)" : "rgba(124, 196, 255, 0.4)";
+
+  if (radius === 0) {
+    const left = cx - sx * 0.5;
+    const top = cy - sy * 0.5;
+    cursorCtx.save();
+    cursorCtx.beginPath();
+    cursorCtx.rect(left, top, sx, sy);
+    cursorCtx.strokeStyle = "rgba(0, 0, 0, 0.28)";
+    cursorCtx.lineWidth = cellPx + 2;
+    cursorCtx.stroke();
+
+    cursorCtx.setLineDash([6 * cellPx, 4 * cellPx]);
+    cursorCtx.beginPath();
+    cursorCtx.rect(left, top, sx, sy);
+    cursorCtx.strokeStyle = color;
+    cursorCtx.lineWidth = cellPx;
+    cursorCtx.stroke();
+    cursorCtx.setLineDash([]);
+    cursorCtx.restore();
+    return;
+  }
 
   cursorCtx.save();
   cursorCtx.translate(cx, cy);
