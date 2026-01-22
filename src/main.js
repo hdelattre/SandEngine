@@ -324,6 +324,50 @@ function cancelCopySelection() {
   copySel.pointerId = -1;
 }
 
+const MAX_PAINT_PTS = 24;
+/** @type {null | {id: number, temp: number, data: number, flags: number}} */
+let paintBatchCell = null;
+let paintBatchRadius = 0;
+let paintBatchAdd = false;
+const paintBatchCenters = new Int32Array(MAX_PAINT_PTS * 2);
+let paintBatchCount = 0;
+
+function flushPaintBatch() {
+  if (!paintBatchCell || paintBatchCount <= 0) return;
+  sim.paintCircles(paintBatchCenters.subarray(0, paintBatchCount * 2), paintBatchCell, paintBatchRadius, { addMode: paintBatchAdd });
+  paintBatchCell = null;
+  paintBatchCount = 0;
+}
+
+/**
+ * @param {number} x
+ * @param {number} y
+ * @param {{id: number, temp: number, data: number, flags: number}} cell
+ * @param {number} radius
+ * @param {{addMode?: boolean} | undefined} [opts]
+ */
+function enqueuePaintCircle(x, y, cell, radius, opts) {
+  const add = opts?.addMode ?? false;
+  const same =
+    paintBatchCell &&
+    paintBatchCell.id === (cell.id | 0) &&
+    paintBatchCell.temp === (cell.temp | 0) &&
+    paintBatchCell.data === (cell.data | 0) &&
+    paintBatchCell.flags === (cell.flags | 0) &&
+    paintBatchRadius === (radius | 0) &&
+    paintBatchAdd === add;
+  if (!same || paintBatchCount >= MAX_PAINT_PTS) flushPaintBatch();
+  if (!paintBatchCell) {
+    paintBatchCell = { id: cell.id | 0, temp: cell.temp | 0, data: cell.data | 0, flags: cell.flags | 0 };
+    paintBatchRadius = radius | 0;
+    paintBatchAdd = add;
+  }
+  const i = paintBatchCount * 2;
+  paintBatchCenters[i + 0] = x | 0;
+  paintBatchCenters[i + 1] = y | 0;
+  paintBatchCount++;
+}
+
 /**
  * @param {number} id
  */
@@ -627,7 +671,7 @@ function paintAt(x, y, mode, agentDir) {
       const cost = activeLevel.paintCost(radius);
       if (remainingBudget < cost) {
         notify("out of budget");
-        return;
+        return false;
       }
       remainingBudget -= cost;
     }
@@ -650,7 +694,8 @@ function paintAt(x, y, mode, agentDir) {
     flags = (flags & ~15) | (agentDir & 15);
   }
 
-  sim.paintCircle(x, y, { id, temp: base.temp, data, flags }, radius, { addMode: doAdd });
+  enqueuePaintCircle(x, y, { id, temp: base.temp, data, flags }, radius, { addMode: doAdd });
+  return true;
 }
 
 /**
@@ -1920,7 +1965,17 @@ function loop(now) {
       if (picked !== "auto") agentDir = /** @type {0|1|2|3|4|5|6|7|8|9|10|11|12|13|14|15} */ (clampInt(Number(picked) || 0, 0, 15));
       else if (dx !== 0 || dy !== 0) agentDir = dirIndex16FromDxDy(dx, dy);
     }
-    forEachLinePoint(x0, y0, x1, y1, (x, y) => paintAt(x, y, brush.mode, agentDir));
+    if (singlePaint.checked) {
+      paintAt(x1, y1, brush.mode, agentDir);
+    } else {
+      let ok = true;
+      forEachLinePoint(x0, y0, x1, y1, (x, y) => {
+        if (!ok) return;
+        ok = paintAt(x, y, brush.mode, agentDir);
+      });
+    }
+    flushPaintBatch();
+
     brush.lastX = x1;
     brush.lastY = y1;
     if (singlePaint.checked) brush.down = false;

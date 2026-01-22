@@ -2021,13 +2021,16 @@ precision highp float;
 precision highp int;
 precision highp usampler2D;
 
+#define MAX_PAINT_PTS 24
+
 uniform usampler2D u_state;
 uniform usampler2D u_energy;
 uniform usampler2D u_thermal0;
 uniform usampler2D u_thermal1;
 uniform usampler2D u_latent;
 uniform ivec2 u_size;
-uniform ivec2 u_center;
+uniform ivec2 u_centers[MAX_PAINT_PTS];
+uniform int u_count;
 uniform int u_radius;
 uniform uvec4 u_paint;
 uniform uint u_seed;
@@ -2128,11 +2131,19 @@ void main() {
     return;
   }
 
-  ivec2 d = c - u_center;
   int r2 = u_radius * u_radius;
-  int dist2 = d.x * d.x + d.y * d.y;
+  bool hit = false;
+  for (int i = 0; i < MAX_PAINT_PTS; i++) {
+    if (i >= u_count) break;
+    ivec2 d = c - u_centers[i];
+    int dist2 = d.x * d.x + d.y * d.y;
+    if (dist2 <= r2) {
+      hit = true;
+      break;
+    }
+  }
 
-  if (dist2 <= r2) {
+  if (hit) {
     uvec4 s = u_paint;
 
     if (u_addMode != 0 && s.r != P_EMPTY) {

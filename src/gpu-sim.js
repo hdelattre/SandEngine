@@ -105,6 +105,8 @@ export class GpuSim {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     this._imgSize = { width: 0, height: 0 };
 
+    this._paintCenters = new Int32Array(24 * 2);
+
     this._stateTex = /** @type {[WebGLTexture, WebGLTexture]} */ ([null, null]);
     this._energyTex = /** @type {[WebGLTexture, WebGLTexture]} */ ([null, null]);
     this._worldFb = /** @type {[WebGLFramebuffer, WebGLFramebuffer]} */ ([null, null]);
@@ -453,7 +455,8 @@ export class GpuSim {
         state: mustGetUniform(gl, program, "u_state"),
         energy: mustGetUniform(gl, program, "u_energy"),
         size: mustGetUniform(gl, program, "u_size"),
-        center: mustGetUniform(gl, program, "u_center"),
+        centers: mustGetUniform(gl, program, "u_centers[0]"),
+        count: mustGetUniform(gl, program, "u_count"),
         radius: mustGetUniform(gl, program, "u_radius"),
         paint: mustGetUniform(gl, program, "u_paint"),
         addMode: mustGetUniform(gl, program, "u_addMode"),
@@ -1008,15 +1011,30 @@ export class GpuSim {
    * @param {{addMode?: boolean} | undefined} [opts]
    */
   paintCircle(x, y, cell, radius, opts) {
-    if (x < 0 || y < 0 || x >= this.width || y >= this.height) return;
+    this.paintCircles([x, y], cell, radius, opts);
+  }
 
+  /**
+   * Paints multiple filled circles (same radius + cell) in fewer GPU passes.
+   * @param {number[] | Int32Array} centersXY Flat [x0,y0,x1,y1,...]
+   * @param {{id: number, temp: number, data: number, flags: number}} cell
+   * @param {number} radius
+   * @param {{addMode?: boolean} | undefined} [opts]
+   */
+  paintCircles(centersXY, cell, radius, opts) {
     const gl = this.gl;
     const { program, u } = this._paint;
     const addMode = opts?.addMode ?? false;
+    const maxPts = 24;
+    const n = Math.min(maxPts, ((centersXY.length / 2) | 0));
+    if (n <= 0) return;
+
+    for (let i = 0; i < n * 2; i++) this._paintCenters[i] = centersXY[i] | 0;
 
     gl.useProgram(program);
     gl.uniform2i(u.size, this.width, this.height);
-    gl.uniform2i(u.center, x | 0, y | 0);
+    gl.uniform1i(u.count, n);
+    gl.uniform2iv(u.centers, this._paintCenters.subarray(0, n * 2));
     gl.uniform1i(u.radius, radius | 0);
     gl.uniform4ui(u.paint, cell.id >>> 0, clampByte(cell.temp) >>> 0, clampByte(cell.data) >>> 0, clampByte(cell.flags) >>> 0);
     gl.uniform1i(u.addMode, addMode ? 1 : 0);
