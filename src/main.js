@@ -1798,6 +1798,7 @@ function loop(now) {
   // Exponential smoothing with a fixed time constant (so it converges quickly even at very low FPS)
   const fpsAlpha = 1 - Math.exp(-(fpsDtMs / 1000) / 0.5);
   fps += (instFps - fps) * fpsAlpha;
+  const uiFps = Math.min(fps, instFps);
 
   const dtSeconds = dtMs / 1000;
 
@@ -1888,22 +1889,23 @@ function loop(now) {
     const target = targetSpsForFrame;
     const eff = simEffectiveSpsEma;
     const gpuBound = running && !startupStepRamp && target > 0 && (overflowed || (steps === MAX_STEPS_PER_FRAME && eff + 5 < target));
-    const fpsLow = running && !startupStepRamp && fps < 30;
-    simSlow = (gpuBound && eff < target * 0.92) || (fpsLow && target > 0);
+    const fpsUiBad = running && !startupStepRamp && uiFps < 12 && steps > 0;
+    simSlow = (gpuBound && eff < target * 0.92) || fpsUiBad;
 
     const userRecentlyChanged = now - lastUserRateChangeNow < 2000;
     const canAutoTune = running && !startupStepRamp && !userRecentlyChanged;
-    if (canAutoTune && (gpuBound || fpsLow) && now - lastAutoTuneNow > 650) {
+    const autoTuneIntervalMs = fpsUiBad ? 250 : 650;
+    if (canAutoTune && (gpuBound || fpsUiBad) && now - lastAutoTuneNow > autoTuneIntervalMs) {
       // Reduce requested SPS toward what the machine can sustain (only decreases).
       const current = clamp(Number(simRate.value) || 0, MIN_STEPS_PER_SECOND, MAX_STEPS_PER_SECOND);
       const quantum = clampInt(Math.round(current * 0.05), 1, 50);
       const suggestedByThroughput = eff * 0.92;
-      const suggestedByFps = current * clamp((fps / 30) * 0.9, 0, 1);
-      const desiredFloat = Math.max(1, Math.min(suggestedByThroughput, suggestedByFps));
+      const suggestedByUi = fpsUiBad ? uiFps * 2 : target;
+      const desiredFloat = Math.max(1, Math.min(suggestedByThroughput, suggestedByUi));
       const desired = clamp(Math.floor(desiredFloat / quantum) * quantum, 1, MAX_STEPS_PER_SECOND);
 
       // Apply a capped proportional reduction to avoid big SPS jumps.
-      const maxDropRaw = Math.max(quantum, Math.round(current * 0.15));
+      const maxDropRaw = fpsUiBad ? Math.max(quantum, Math.round(current * 0.45)) : Math.max(quantum, Math.round(current * 0.15));
       const maxDrop = Math.max(quantum, Math.round(maxDropRaw / quantum) * quantum);
       const next = clamp(Math.max(desired, current - maxDrop), 1, MAX_STEPS_PER_SECOND);
 
