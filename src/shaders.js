@@ -1053,6 +1053,69 @@ void selfUpdate(ivec2 c, inout uvec4 s, inout uint e, uint salt) {
     }
 
     meta = packBotMeta(dir, drill, movedParity, cd);
+  } else if (id == P_GLIDER) {
+    uint dir = 0u;
+    uint drill = 0u;
+    uint movedParity = 0u;
+    uint cd = 0u;
+
+    if ((meta & 128u) == 0u) {
+      // Legacy glider meta used the legacy bot layout.
+      uint oldDir = meta & 1u;
+      movedParity = (meta >> 2u) & 1u;
+      cd = (meta >> 3u) & 3u;
+      dir = (oldDir == 0u) ? 4u : 12u;
+      drill = 0u;
+    } else {
+      dir = botDir(meta);
+      drill = botDrill(meta);
+      movedParity = botMovedParity(meta);
+      cd = botCd(meta);
+    }
+    if (cd > 0u) cd -= 1u;
+
+    // Glider keeps a straight heading, but bounces (reflects) off obstacles/walls.
+    bool blocked = (drill == 0u) && !botCanMove(c, dir);
+    if (blocked && cd == 0u) {
+      uint step8 = botStepDir8(c, dir);
+      ivec2 d = botDir8Vec(step8);
+
+      bool xBlocked = false;
+      bool yBlocked = false;
+      if (d.x != 0) {
+        ivec2 nx = c + ivec2(d.x, 0);
+        xBlocked = !inBounds(nx) || !botPassable(loadState(nx).r);
+      }
+      if (d.y != 0) {
+        ivec2 ny = c + ivec2(0, d.y);
+        yBlocked = !inBounds(ny) || !botPassable(loadState(ny).r);
+      }
+
+      // If the diagonal cell is blocked but both axis-adjacent cells are open, slide along one axis.
+      if (d.x != 0 && d.y != 0) {
+        ivec2 nd = c + d;
+        bool diagBlocked = !inBounds(nd) || !botPassable(loadState(nd).r);
+        if (diagBlocked && !xBlocked) {
+          dir = (d.x > 0) ? 4u : 12u;
+          cd = 1u;
+        } else if (diagBlocked && !yBlocked) {
+          dir = (d.y > 0) ? 0u : 8u;
+          cd = 1u;
+        } else {
+          if (xBlocked) dir = (16u - dir) & 15u;
+          if (yBlocked) dir = (8u - dir) & 15u;
+          if (!xBlocked && !yBlocked) dir = (dir + 8u) & 15u;
+          cd = 1u;
+        }
+      } else {
+        if (xBlocked) dir = (16u - dir) & 15u;
+        if (yBlocked) dir = (8u - dir) & 15u;
+        if (!xBlocked && !yBlocked) dir = (dir + 8u) & 15u;
+        cd = 1u;
+      }
+    }
+
+    meta = packBotMeta(dir, drill, movedParity, cd);
   } else if (id == P_ACID) {
     // Acid slowly loses strength.
     if (data > 0u && (randByte(uvec2(c), salt) < 6u)) data -= 1u;
