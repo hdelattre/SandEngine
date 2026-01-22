@@ -134,6 +134,31 @@ const topbar = /** @type {HTMLElement | null} */ (document.querySelector("header
 
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
+/** @type {{w: number, h: number}} */
+const mainCanvasCssSize = { w: 0, h: 0 };
+const hasResizeObserver = typeof ResizeObserver !== "undefined";
+
+function readMainCanvasCssSize() {
+  const rect = canvas.getBoundingClientRect();
+  mainCanvasCssSize.w = rect.width;
+  mainCanvasCssSize.h = rect.height;
+}
+
+readMainCanvasCssSize();
+if (hasResizeObserver) {
+  const ro = new ResizeObserver((entries) => {
+    for (const entry of entries) {
+      if (entry.target !== canvas) continue;
+      mainCanvasCssSize.w = entry.contentRect.width;
+      mainCanvasCssSize.h = entry.contentRect.height;
+    }
+  });
+  ro.observe(canvas);
+} else {
+  // Fall back to a layout read on window resize only.
+  window.addEventListener("resize", readMainCanvasCssSize, { passive: true });
+}
+
 /** @type {CanvasRenderingContext2D | null} */
 const cursorCtx = cursorCanvas.getContext("2d");
 if (cursorCtx) cursorCtx.imageSmoothingEnabled = true;
@@ -1976,8 +2001,17 @@ function loop(now) {
   }
   lastNow = now;
 
-  sim.resizeCanvasToDisplaySize();
-  resizeCanvasToDisplaySize(cursorCanvas);
+  const dpr = window.devicePixelRatio || 1;
+  let cssW = mainCanvasCssSize.w;
+  let cssH = mainCanvasCssSize.h;
+  if (!hasResizeObserver) {
+    const rect = canvas.getBoundingClientRect();
+    cssW = rect.width;
+    cssH = rect.height;
+  }
+  resizeCanvasToDisplaySize(canvas, cssW, cssH, dpr);
+  const cursorResized = resizeCanvasToDisplaySize(cursorCanvas, cssW, cssH, dpr);
+  if (cursorResized && cursorCtx) cursorCtx.imageSmoothingEnabled = true;
 
   // Brush gets applied in the animation loop so we don't thrash GPU from event handlers.
   if (brush.down) {
@@ -2187,18 +2221,21 @@ requestAnimationFrame(loop);
 
 /**
  * @param {HTMLCanvasElement} c
+ * @param {number} cssW
+ * @param {number} cssH
+ * @param {number} dpr
  */
-function resizeCanvasToDisplaySize(c) {
-  const dpr = window.devicePixelRatio || 1;
-  const rect = c.getBoundingClientRect();
-  const cssW = Math.max(1, Math.round(rect.width));
-  const cssH = Math.max(1, Math.round(rect.height));
-  const w = Math.max(1, Math.round(cssW * dpr));
-  const h = Math.max(1, Math.round(cssH * dpr));
-  if (c.width !== w || c.height !== h) {
+function resizeCanvasToDisplaySize(c, cssW, cssH, dpr) {
+  const cw = Math.max(1, Math.round(cssW));
+  const ch = Math.max(1, Math.round(cssH));
+  const w = Math.max(1, Math.round(cw * dpr));
+  const h = Math.max(1, Math.round(ch * dpr));
+  const changed = c.width !== w || c.height !== h;
+  if (changed) {
     c.width = w;
     c.height = h;
   }
+  return changed;
 }
 
 function drawBrushCursor() {
