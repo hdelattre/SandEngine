@@ -74,7 +74,7 @@ export class GpuSim {
     this.caEnabled = false;
     this.caInterval = 1;
     this.caRule = 30;
-    this.caPaintId = 1;
+    this.caPaintId = 3;
     this.caSeedX = (opts.width >> 1) | 0;
     this.caSeedY = Math.max(1, (opts.height | 0) - 2);
     this.caGen = 0;

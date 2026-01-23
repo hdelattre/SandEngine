@@ -181,13 +181,13 @@ particleSelect.value = String(Particle.SAND);
 for (const id of Object.values(Particle)) {
   if (id === Particle.BOT || id === Particle.GLIDER) continue;
   const def = particleDefs[id];
-  const opt = document.createElement("option");
-  opt.value = String(def.id);
-  opt.textContent = def.name;
-  agentPaintSelect.appendChild(opt);
-}
+	  const opt = document.createElement("option");
+	  opt.value = String(def.id);
+	  opt.textContent = def.name;
+	  agentPaintSelect.appendChild(opt);
+	}
 agentPaintSelect.value = String(Particle.EMPTY);
-caPaintSelect.value = String(Particle.SAND);
+caPaintSelect.value = String(Particle.STONE);
 
 const paletteTexels = buildPaletteTexels(particleDefs);
 const propTexels = buildPropTexels(particleDefs);
