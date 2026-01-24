@@ -410,10 +410,7 @@ const uint P_WIRE = 16u;
 	const uint P_CIRCUIT_WIRE = 21u;
 	const uint P_CIRCUIT_POWER = 22u;
 	const uint P_CIRCUIT_LAMP = 23u;
-	const uint P_CIRCUIT_NOT_N = 24u;
-	const uint P_CIRCUIT_NOT_E = 25u;
-	const uint P_CIRCUIT_NOT_S = 26u;
-	const uint P_CIRCUIT_NOT_W = 27u;
+	const uint P_CIRCUIT_NOT = 24u;
 	const uint P_CIRCUIT_CLOCK_E = 28u;
 	const uint P_CIRCUIT_TOGGLE_E = 29u;
 
@@ -770,7 +767,7 @@ void agentPaintCell(uint paintId, out uint id, out uint temp, out uint data, out
   else if (id == P_BOT) { meta = 148u; }
   else if (id == P_GLIDER) { meta = 148u; }
   else if (id == P_CIRCUIT_POWER) { data = 15u; }
-  else if (id == P_CIRCUIT_NOT_N || id == P_CIRCUIT_NOT_E || id == P_CIRCUIT_NOT_S || id == P_CIRCUIT_NOT_W) { data = 15u; }
+  else if (id == P_CIRCUIT_NOT) { data = 15u; meta = 1u; }
   else if (id == P_CIRCUIT_CLOCK_E) { data = 15u; meta = 1u; }
   else if (id == P_CIRCUIT_TOGGLE_E) { data = 0u; meta = 0u; }
 
@@ -973,32 +970,35 @@ uint circuitClamp15(uint p) {
   return min(15u, p);
 }
 
-bool circuitIsInverter(uint id) {
-  return (id == P_CIRCUIT_NOT_N) || (id == P_CIRCUIT_NOT_E) || (id == P_CIRCUIT_NOT_S) || (id == P_CIRCUIT_NOT_W);
+bool circuitIsInverterId(uint id) {
+  return id == P_CIRCUIT_NOT;
 }
 
-bool circuitIsDirectionalSource(uint id) {
-  if (circuitIsInverter(id)) return true;
-  return (id == P_CIRCUIT_CLOCK_E) || (id == P_CIRCUIT_TOGGLE_E);
-}
-
-ivec2 circuitInverterOutDelta(uint id) {
-  if (id == P_CIRCUIT_NOT_N) return ivec2(0, 1);
-  if (id == P_CIRCUIT_NOT_E) return ivec2(1, 0);
-  if (id == P_CIRCUIT_NOT_S) return ivec2(0, -1);
+ivec2 circuitDir4Delta(uint dir4) {
+  dir4 &= 3u;
+  if (dir4 == 0u) return ivec2(0, 1);
+  if (dir4 == 1u) return ivec2(1, 0);
+  if (dir4 == 2u) return ivec2(0, -1);
   return ivec2(-1, 0);
 }
 
-ivec2 circuitOutDelta(uint id) {
-  if (circuitIsInverter(id)) return circuitInverterOutDelta(id);
+bool circuitIsDirectionalSourceState(uvec4 s) {
+  uint id = s.r;
+  if (circuitIsInverterId(id)) return true;
+  return (id == P_CIRCUIT_CLOCK_E) || (id == P_CIRCUIT_TOGGLE_E);
+}
+
+ivec2 circuitOutDeltaFromState(uvec4 s) {
+  uint id = s.r;
+  if (circuitIsInverterId(id)) return circuitDir4Delta(s.a & 3u);
   // Fixed-orientation circuit sources.
   if (id == P_CIRCUIT_CLOCK_E) return ivec2(1, 0);
   if (id == P_CIRCUIT_TOGGLE_E) return ivec2(1, 0);
   return ivec2(0, 0);
 }
 
-bool circuitOutputsToward(uint id, ivec2 deltaFromSourceToTarget) {
-  return deltaFromSourceToTarget == circuitOutDelta(id);
+bool circuitOutputsToward(uvec4 source, ivec2 deltaFromSourceToTarget) {
+  return deltaFromSourceToTarget == circuitOutDeltaFromState(source);
 }
 
 uint circuitPowerFromNeighborToWire(ivec2 deltaToNeighbor, uvec4 n) {
@@ -1006,7 +1006,7 @@ uint circuitPowerFromNeighborToWire(ivec2 deltaToNeighbor, uvec4 n) {
   uint ndata = circuitClamp15(n.b);
   if (nid == P_CIRCUIT_POWER) return 15u;
   if (nid == P_CIRCUIT_WIRE) return (ndata > 0u) ? (ndata - 1u) : 0u;
-  if (circuitIsDirectionalSource(nid) && circuitOutputsToward(nid, -deltaToNeighbor)) return ndata;
+  if (circuitIsDirectionalSourceState(n) && circuitOutputsToward(n, -deltaToNeighbor)) return ndata;
   return 0u;
 }
 
@@ -1015,7 +1015,7 @@ uint circuitPowerFromNeighborToInput(ivec2 deltaToNeighbor, uvec4 n) {
   uint ndata = circuitClamp15(n.b);
   if (nid == P_CIRCUIT_POWER) return 15u;
   if (nid == P_CIRCUIT_WIRE) return ndata;
-  if (circuitIsDirectionalSource(nid) && circuitOutputsToward(nid, -deltaToNeighbor)) return ndata;
+  if (circuitIsDirectionalSourceState(n) && circuitOutputsToward(n, -deltaToNeighbor)) return ndata;
   return 0u;
 }
 
@@ -1414,14 +1414,15 @@ void selfUpdate(ivec2 c, inout uvec4 s, inout uint e, uint salt) {
     uint inP = circuitMaxInputPower(c);
     data = (inP > 0u) ? 15u : 0u;
     meta = 0u;
-  } else if (circuitIsInverter(id)) {
-    ivec2 outD = circuitInverterOutDelta(id);
+  } else if (circuitIsInverterId(id)) {
+    uint dir4 = meta & 3u;
+    ivec2 outD = circuitDir4Delta(dir4);
     ivec2 inD = -outD;
     uint inP = 0u;
     ivec2 n = c + inD;
     if (inBounds(n)) inP = circuitPowerFromNeighborToInput(inD, loadState(n));
     data = (inP > 0u) ? 0u : 15u;
-    meta = 0u;
+    meta = (meta & ~3u) | dir4;
   } else if (id == P_CIRCUIT_CLOCK_E) {
     // A simple free-running clock: toggles output every meta ticks.
     if (meta > 0u) {
@@ -2593,10 +2594,7 @@ const uint P_GLIDER = 20u;
 const uint P_CIRCUIT_WIRE = 21u;
 const uint P_CIRCUIT_POWER = 22u;
 const uint P_CIRCUIT_LAMP = 23u;
-const uint P_CIRCUIT_NOT_N = 24u;
-const uint P_CIRCUIT_NOT_E = 25u;
-const uint P_CIRCUIT_NOT_S = 26u;
-const uint P_CIRCUIT_NOT_W = 27u;
+const uint P_CIRCUIT_NOT = 24u;
 const uint P_CIRCUIT_CLOCK_E = 28u;
 const uint P_CIRCUIT_TOGGLE_E = 29u;
 
@@ -2672,7 +2670,7 @@ uvec4 makeCell(uint id) {
   else if (id == P_BOT) { data = 0u; meta = 148u; }
   else if (id == P_GLIDER) { data = 0u; meta = 148u; }
   else if (id == P_CIRCUIT_POWER) { data = 15u; }
-  else if (id == P_CIRCUIT_NOT_N || id == P_CIRCUIT_NOT_E || id == P_CIRCUIT_NOT_S || id == P_CIRCUIT_NOT_W) { data = 15u; }
+  else if (id == P_CIRCUIT_NOT) { data = 15u; meta = 1u; }
   else if (id == P_CIRCUIT_CLOCK_E) { data = 15u; meta = 1u; }
   return uvec4(id, temp, data, meta);
 }
@@ -2726,7 +2724,6 @@ uint mapColor(vec3 rgb, uint targetId) {
   uint bestId = P_STONE;
   for (int id = 0; id < 256; id++) {
     vec3 pc = texelFetch(u_palette, ivec2(id, 0), 0).rgb;
-    // Skip placeholder magenta entries (undefined particles).
     if (pc.r > 0.99 && pc.g < 0.01 && pc.b > 0.99) continue;
     uint pid = uint(id);
     if (u_allowAgents == 0 && (pid == P_BOT || pid == P_GLIDER)) continue;
@@ -2904,10 +2901,7 @@ const uint P_EMPTY = 0u;
 const uint P_CIRCUIT_WIRE = 21u;
 const uint P_CIRCUIT_POWER = 22u;
 const uint P_CIRCUIT_LAMP = 23u;
-const uint P_CIRCUIT_NOT_N = 24u;
-const uint P_CIRCUIT_NOT_E = 25u;
-const uint P_CIRCUIT_NOT_S = 26u;
-const uint P_CIRCUIT_NOT_W = 27u;
+const uint P_CIRCUIT_NOT = 24u;
 const uint P_CIRCUIT_CLOCK_E = 28u;
 const uint P_CIRCUIT_TOGGLE_E = 29u;
 const float TAU = 6.28318530718;
@@ -2948,7 +2942,7 @@ vec3 temperatureColor(float t) {
   return c;
 }
 
-vec3 shadeMaterial(uint id, uint temp, uint data) {
+vec3 shadeMaterial(uint id, uint temp, uint data, uint meta) {
   vec3 base = texelFetch(u_palette, ivec2(int(id), 0), 0).rgb;
   float heat = (float(temp) - float(u_ambientTemp)) / 128.0; // ~[-1..1]
   vec3 warm = vec3(1.0, 0.45, 0.15);
@@ -2961,10 +2955,7 @@ vec3 shadeMaterial(uint id, uint temp, uint data) {
     id == P_CIRCUIT_WIRE ||
     id == P_CIRCUIT_POWER ||
     id == P_CIRCUIT_LAMP ||
-    id == P_CIRCUIT_NOT_N ||
-    id == P_CIRCUIT_NOT_E ||
-    id == P_CIRCUIT_NOT_S ||
-    id == P_CIRCUIT_NOT_W ||
+    id == P_CIRCUIT_NOT ||
     id == P_CIRCUIT_CLOCK_E ||
     id == P_CIRCUIT_TOGGLE_E
   ) {
@@ -2979,8 +2970,18 @@ vec3 shadeMaterial(uint id, uint temp, uint data) {
       vec3 on = vec3(1.0, 0.95, 0.70);
       shaded = mix(shaded, on, 0.85 * smoothstep(0.0, 1.0, p));
     } else {
-      vec3 glow = vec3(1.0, 0.62, 0.10);
-      shaded = mix(shaded, glow, 0.65 * p);
+      if (id == P_CIRCUIT_NOT) {
+        uint d = meta & 3u;
+        vec3 glow;
+        if (d == 0u) glow = vec3(0.62, 0.96, 0.22); // N
+        else if (d == 1u) glow = vec3(1.0, 0.62, 0.10); // E
+        else if (d == 2u) glow = vec3(0.96, 0.46, 0.16); // S
+        else glow = vec3(0.96, 0.26, 0.38); // W
+        shaded = mix(shaded, glow, 0.65 * p);
+      } else {
+        vec3 glow = vec3(1.0, 0.62, 0.10);
+        shaded = mix(shaded, glow, 0.65 * p);
+      }
     }
   }
 
@@ -3098,7 +3099,7 @@ void main() {
     uvec4 s = texelFetch(u_state, c, 0);
     uint id = s.r;
     uint temp = s.g;
-    vec3 base = shadeMaterial(id, temp, s.b);
+    vec3 base = shadeMaterial(id, temp, s.b, s.a);
     base = applyRelief(base, c);
     outColor = vec4(base, 1.0);
     return;
@@ -3135,24 +3136,24 @@ void main() {
   float wsum = 0.0;
 
   if (a.r != P_EMPTY) {
-    sum += shadeMaterial(a.r, a.g, a.b);
+    sum += shadeMaterial(a.r, a.g, a.b, a.a);
     wsum += 1.0;
   }
   if (b.r != P_EMPTY) {
-    sum += shadeMaterial(b.r, b.g, b.b);
+    sum += shadeMaterial(b.r, b.g, b.b, b.a);
     wsum += 1.0;
   }
   if (c.r != P_EMPTY) {
-    sum += shadeMaterial(c.r, c.g, c.b);
+    sum += shadeMaterial(c.r, c.g, c.b, c.a);
     wsum += 1.0;
   }
   if (d.r != P_EMPTY) {
-    sum += shadeMaterial(d.r, d.g, d.b);
+    sum += shadeMaterial(d.r, d.g, d.b, d.a);
     wsum += 1.0;
   }
 
   if (wsum <= 0.0) {
-    outColor = vec4(shadeMaterial(P_EMPTY, a.g, a.b), 1.0);
+    outColor = vec4(shadeMaterial(P_EMPTY, a.g, a.b, 0u), 1.0);
   } else {
 #if RELIEF_MODE != 0
 #if RELIEF_MODE == 2

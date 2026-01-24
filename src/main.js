@@ -96,6 +96,8 @@ const agentPaintControl = /** @type {HTMLElement} */ (document.getElementById("a
 const agentPaintSelect = /** @type {HTMLSelectElement} */ (document.getElementById("agentPaintSelect"));
 const agentDirControl = /** @type {HTMLElement} */ (document.getElementById("agentDirControl"));
 const agentDirSelect = /** @type {HTMLSelectElement} */ (document.getElementById("agentDirSelect"));
+const circuitDirControl = /** @type {HTMLElement} */ (document.getElementById("circuitDirControl"));
+const circuitDirSelect = /** @type {HTMLSelectElement} */ (document.getElementById("circuitDirSelect"));
 const agentDrillControl = /** @type {HTMLElement} */ (document.getElementById("agentDrillControl"));
 const agentDrill = /** @type {HTMLInputElement} */ (document.getElementById("agentDrill"));
 const singlePaintControl = /** @type {HTMLElement} */ (document.getElementById("singlePaintControl"));
@@ -776,6 +778,10 @@ function paintAt(x, y, mode, agentDir) {
   ) {
     flags = (flags & ~15) | (agentDir & 15);
   }
+  if (!isErase && id === Particle.CIRCUIT_NOT) {
+    const dir = clampInt(Number(circuitDirSelect.value) | 0, 0, 3);
+    flags = (flags & ~3) | (dir & 3);
+  }
 
   enqueuePaintCircle(x, y, { id, temp: base.temp, data, flags }, radius, { addMode: doAdd });
   return true;
@@ -878,11 +884,13 @@ function refreshToolbarVisibility() {
   const isCopy = activeTool === "copy";
   const selectedParticle = Number(particleSelect.value) | 0;
   const isAgent = selectedParticle === Particle.BOT || selectedParticle === Particle.GLIDER;
+  const isCircuitDirectional = selectedParticle === Particle.CIRCUIT_NOT;
   brushControl.hidden = isStamp || isCopy;
   stampControls.hidden = !isStamp;
   agentPaintControl.hidden = isStamp || isCopy || !isAgent;
   agentDirControl.hidden = isStamp || isCopy || !isAgent;
   agentDrillControl.hidden = isStamp || isCopy || !isAgent;
+  circuitDirControl.hidden = isStamp || isCopy || !isCircuitDirectional;
   singlePaintControl.hidden = isStamp || isCopy;
   if (pasteEdgeStoneWrap) pasteEdgeStoneWrap.hidden = !isStamp;
 }
@@ -2029,6 +2037,16 @@ window.addEventListener("keydown", (e) => {
     return;
   }
 
+  if (e.key === "q" || e.key === "Q") {
+    const selected = Number(particleSelect.value) | 0;
+    if (selected === Particle.CIRCUIT_NOT) {
+      e.preventDefault();
+      const cur = clampInt(Number(circuitDirSelect.value) | 0, 0, 3);
+      circuitDirSelect.value = String((cur + 1) & 3);
+      return;
+    }
+  }
+
   /** @type {Record<string, number>} */
   const hotkeys = {
     "1": Particle.SAND,
@@ -2052,7 +2070,7 @@ window.addEventListener("keydown", (e) => {
     r: Particle.CIRCUIT_WIRE,
     p: Particle.CIRCUIT_POWER,
     l: Particle.CIRCUIT_LAMP,
-    n: Particle.CIRCUIT_NOT_E,
+    n: Particle.CIRCUIT_NOT,
     k: Particle.CIRCUIT_CLOCK_E,
     y: Particle.CIRCUIT_TOGGLE_E,
   };

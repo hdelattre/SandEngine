@@ -28,10 +28,7 @@ export const Particle = /** @type {const} */ ({
   CIRCUIT_WIRE: 21,
   CIRCUIT_POWER: 22,
   CIRCUIT_LAMP: 23,
-  CIRCUIT_NOT_N: 24,
-  CIRCUIT_NOT_E: 25,
-  CIRCUIT_NOT_S: 26,
-  CIRCUIT_NOT_W: 27,
+  CIRCUIT_NOT: 24,
   CIRCUIT_CLOCK_E: 28,
   CIRCUIT_TOGGLE_E: 29,
 });
@@ -271,33 +268,9 @@ export function createParticleDefs() {
     mobility: 0,
     flags: ParticleFlag.IMMOVABLE,
   });
-  defs[Particle.CIRCUIT_NOT_N] = makeDef(Particle.CIRCUIT_NOT_N, {
-    name: "Inverter (N)",
-    color: [210, 176, 64],
-    density: 255,
-    conductivity: 220,
-    mobility: 0,
-    flags: ParticleFlag.IMMOVABLE,
-  });
-  defs[Particle.CIRCUIT_NOT_E] = makeDef(Particle.CIRCUIT_NOT_E, {
-    name: "Inverter (E)",
+  defs[Particle.CIRCUIT_NOT] = makeDef(Particle.CIRCUIT_NOT, {
+    name: "Inverter",
     color: [210, 156, 64],
-    density: 255,
-    conductivity: 220,
-    mobility: 0,
-    flags: ParticleFlag.IMMOVABLE,
-  });
-  defs[Particle.CIRCUIT_NOT_S] = makeDef(Particle.CIRCUIT_NOT_S, {
-    name: "Inverter (S)",
-    color: [210, 136, 64],
-    density: 255,
-    conductivity: 220,
-    mobility: 0,
-    flags: ParticleFlag.IMMOVABLE,
-  });
-  defs[Particle.CIRCUIT_NOT_W] = makeDef(Particle.CIRCUIT_NOT_W, {
-    name: "Inverter (W)",
-    color: [210, 116, 64],
     density: 255,
     conductivity: 220,
     mobility: 0,
@@ -414,12 +387,10 @@ export function defaultCellForParticle(id) {
     case Particle.CIRCUIT_LAMP:
       // `data` is driven by the circuit system (0 or 15 for now).
       return { temp: DEFAULT_AMBIENT_TEMP, data: 0, flags: 0 };
-    case Particle.CIRCUIT_NOT_N:
-    case Particle.CIRCUIT_NOT_E:
-    case Particle.CIRCUIT_NOT_S:
-    case Particle.CIRCUIT_NOT_W:
+    case Particle.CIRCUIT_NOT:
+      // `flags` (state.a) stores direction: 0=N,1=E,2=S,3=W. Default=E.
       // Defaults "on" (unpowered input).
-      return { temp: DEFAULT_AMBIENT_TEMP, data: 15, flags: 0 };
+      return { temp: DEFAULT_AMBIENT_TEMP, data: 15, flags: 1 };
     case Particle.CIRCUIT_CLOCK_E:
       // `data` is the output (0 or 15). `flags` (state.a) is a countdown to next toggle.
       return { temp: DEFAULT_AMBIENT_TEMP, data: 15, flags: 1 };

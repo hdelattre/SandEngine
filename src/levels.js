@@ -91,7 +91,7 @@ function createCircuitLabLevel(particleDefs) {
   const wire = rgbCss(particleDefs[Particle.CIRCUIT_WIRE].color);
   const power = rgbCss(particleDefs[Particle.CIRCUIT_POWER].color);
   const lamp = rgbCss(particleDefs[Particle.CIRCUIT_LAMP].color);
-  const notE = rgbCss(particleDefs[Particle.CIRCUIT_NOT_E].color);
+  const not = rgbCss(particleDefs[Particle.CIRCUIT_NOT].color);
   const air = "rgb(255, 255, 255)";
 
   /** @type {SimSize} */
@@ -106,14 +106,14 @@ function createCircuitLabLevel(particleDefs) {
       Particle.CIRCUIT_WIRE,
       Particle.CIRCUIT_POWER,
       Particle.CIRCUIT_LAMP,
-      Particle.CIRCUIT_NOT_E,
+      Particle.CIRCUIT_NOT,
       Particle.STONE,
     ],
     budget: null,
     paintCost: () => 0,
     goal: null,
     hints: [
-      "Circuit parts: R wire, P power, L lamp, N inverter (E).",
+      "Circuit parts: R wire, P power, L lamp, N inverter (use Dir).",
       "Toggle inputs by erasing/painting Power Sources in the sockets.",
       "Note: circuit power attenuates by 1 per wire cell (range ~15).",
       "Top row (L→R): Wire, NOT, OR, NOR.",
@@ -233,7 +233,7 @@ function createCircuitLabLevel(particleDefs) {
         socket(xSocket, y);
         dot(power, xSocket, y);
         hline(wire, xSocket + 1, xSocket + 7, y);
-        dot(notE, xSocket + 8, y);
+        dot(not, xSocket + 8, y);
         dot(lamp, xSocket + 9, y);
       }
 
@@ -269,7 +269,7 @@ function createCircuitLabLevel(particleDefs) {
         hline(wire, xSocket + 1, xIn, yA);
         hline(wire, xSocket + 1, xIn, yB);
         vline(wire, xIn, yB, yA);
-        dot(notE, xIn + 1, yMid);
+        dot(not, xIn + 1, yMid);
         dot(lamp, xIn + 2, yMid);
       }
 
@@ -321,8 +321,8 @@ function createCircuitLabLevel(particleDefs) {
         dot(power, xSocket, yA);
         hline(wire, xSocket + 1, xInv - 1, yA);
         hline(wire, xSocket + 1, xInv - 1, yB);
-        dot(notE, xInv, yA);
-        dot(notE, xInv, yB);
+        dot(not, xInv, yA);
+        dot(not, xInv, yB);
         vline(wire, xJoin, yB, yA);
         dot(wire, xJoin + 1, yMid);
         dot(lamp, xJoin + 2, yMid);
@@ -345,11 +345,11 @@ function createCircuitLabLevel(particleDefs) {
         dot(power, xSocket, yB);
         hline(wire, xSocket + 1, xInv - 1, yA);
         hline(wire, xSocket + 1, xInv - 1, yB);
-        dot(notE, xInv, yA);
-        dot(notE, xInv, yB);
+        dot(not, xInv, yA);
+        dot(not, xInv, yB);
         vline(wire, xJoin, yB, yA);
         hline(wire, xJoin, xFinal - 1, yMid);
-        dot(notE, xFinal, yMid);
+        dot(not, xFinal, yMid);
         dot(lamp, xFinal + 1, yMid);
       }
 
@@ -382,7 +382,7 @@ function createCircuitCounterLevel(particleDefs) {
       Particle.CIRCUIT_WIRE,
       Particle.CIRCUIT_POWER,
       Particle.CIRCUIT_LAMP,
-      Particle.CIRCUIT_NOT_E,
+      Particle.CIRCUIT_NOT,
       Particle.CIRCUIT_CLOCK_E,
       Particle.CIRCUIT_TOGGLE_E,
       Particle.STONE,
