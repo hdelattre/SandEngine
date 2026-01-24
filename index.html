@@ -66,37 +66,82 @@
               <span class="hotbar__tag" aria-hidden="true">1×</span>
               <input id="singlePaint" class="toggle toggle--mini" type="checkbox" aria-label="Single placement" />
             </label>
-            <div id="stampControls" class="stampControls" hidden>
-              <label class="control control--stampSize">
-                <span>W</span>
-                <input id="stampW" type="number" min="1" step="1" inputmode="numeric" />
-              </label>
-              <label class="control control--stampSize">
-                <span>H</span>
-                <input id="stampH" type="number" min="1" step="1" inputmode="numeric" />
-              </label>
-              <label class="stampControls__toggle" title="Lock aspect">
-                <input id="stampLock" class="toggle toggle--mini" type="checkbox" checked aria-label="Lock aspect" />
-              </label>
-            </div>
-          </div>
-        </div>
-      </div>
+	            <div id="stampControls" class="stampControls" hidden>
+	              <label class="control control--stampSize">
+	                <span>W</span>
+	                <input id="stampW" type="number" min="1" step="1" inputmode="numeric" />
+	              </label>
+	              <label class="control control--stampSize">
+	                <span>H</span>
+	                <input id="stampH" type="number" min="1" step="1" inputmode="numeric" />
+	              </label>
+	              <label class="stampControls__toggle" title="Lock aspect">
+	                <input id="stampLock" class="toggle toggle--mini" type="checkbox" checked aria-label="Lock aspect" />
+	              </label>
+	              <button id="stampMapBtn" type="button" title="Stamp mapping">Map</button>
+	            </div>
+	          </div>
+	        </div>
+	      </div>
 
-      <div id="particlePicker" class="modal" role="dialog" aria-modal="true" aria-label="Particle picker" hidden>
-        <div class="modal__card">
-          <div class="modal__header">
-            <input id="particleSearch" class="modal__search" type="search" placeholder="Search particles…" autocomplete="off" />
-            <button id="particlePickerCloseBtn" type="button">Close</button>
-          </div>
-          <div id="particleGrid" class="particleGrid" role="listbox" aria-label="All particles"></div>
-        </div>
-      </div>
+	      <div id="particlePicker" class="modal" role="dialog" aria-modal="true" aria-label="Particle picker" hidden>
+	        <div class="modal__card">
+	          <div class="modal__header">
+	            <input id="particleSearch" class="modal__search" type="search" placeholder="Search particles…" autocomplete="off" />
+	            <button id="particlePickerCloseBtn" type="button">Close</button>
+	          </div>
+	          <div id="particleGrid" class="particleGrid" role="listbox" aria-label="All particles"></div>
+	        </div>
+	      </div>
 
-      <div class="topbar__panel" id="settingsPanel" role="region" aria-label="Settings" hidden>
-        <div class="panelGrid">
-          <label class="control control--select">
-            <span>Level</span>
+	      <div id="stampMapModal" class="modal" role="dialog" aria-modal="true" aria-label="Stamp mapping" hidden>
+	        <div class="modal__card">
+	          <div class="modal__header">
+	            <div style="font-weight: 700">Stamp mapping</div>
+	            <button id="stampMapCloseBtn" type="button">Close</button>
+	          </div>
+	          <div class="panelGrid">
+	            <label class="control control--range" title="Prefer natural materials by hue (greens→Plant, blues→Water, yellows→Sand)">
+	              <span>Hue map</span>
+	              <input id="stampHue" type="range" min="0" max="100" step="1" value="25" />
+	              <output class="control__value" id="stampHueValue">25%</output>
+	            </label>
+	            <label class="control control--range" title="Bias toward Plant when color mapping is ambiguous">
+	              <span>Plant bias</span>
+	              <input id="stampBiasPlant" type="range" min="0" max="100" step="1" value="20" />
+	              <output class="control__value" id="stampBiasPlantValue">20%</output>
+	            </label>
+	            <label class="control control--range" title="Bias toward Water when color mapping is ambiguous">
+	              <span>Water bias</span>
+	              <input id="stampBiasWater" type="range" min="0" max="100" step="1" value="10" />
+	              <output class="control__value" id="stampBiasWaterValue">10%</output>
+	            </label>
+	            <label class="control control--range" title="Bias toward Stone when color mapping is ambiguous">
+	              <span>Stone bias</span>
+	              <input id="stampBiasStone" type="range" min="0" max="100" step="1" value="0" />
+	              <output class="control__value" id="stampBiasStoneValue">0%</output>
+	            </label>
+	            <label class="control control--range" title="Add a little dithering before mapping (adds texture / variety)">
+	              <span>Dither</span>
+	              <input id="stampDither" type="range" min="0" max="30" step="1" value="5" />
+	              <output class="control__value" id="stampDitherValue">5%</output>
+	            </label>
+              <label class="control control--toggle" title="Allow Bots/Gliders to be stamped (off by default)">
+                <span>Agents</span>
+                <input id="stampAllowAgents" class="toggle" type="checkbox" />
+              </label>
+              <label class="control control--toggle" title="Allow computational circuits to be stamped (off by default)">
+                <span>Circuits</span>
+                <input id="stampAllowCircuits" class="toggle" type="checkbox" />
+              </label>
+	          </div>
+	        </div>
+	      </div>
+
+	      <div class="topbar__panel" id="settingsPanel" role="region" aria-label="Settings" hidden>
+	        <div class="panelGrid">
+	          <label class="control control--select">
+	            <span>Level</span>
             <select id="levelSelect"></select>
           </label>
           <label class="control control--select">
@@ -145,14 +190,14 @@
               <option value="dunes">Dunes</option>
             </select>
           </label>
-          <label class="control control--select">
-            <span>Res</span>
-            <select id="resSelect"></select>
-          </label>
-          <!-- CA rule moved into the Wolfram CA group below -->
-          <div class="panelGroup panelGroup--gol">
-            <label class="control control--toggle" title="Run a Game of Life pass every tick">
-              <span>Game of Life</span>
+	          <label class="control control--select">
+	            <span>Res</span>
+	            <select id="resSelect"></select>
+	          </label>
+	          <!-- CA rule moved into the Wolfram CA group below -->
+	          <div class="panelGroup panelGroup--gol">
+	            <label class="control control--toggle" title="Run a Game of Life pass every tick">
+	              <span>Game of Life</span>
               <input id="golMode" class="toggle" type="checkbox" aria-label="Game of Life" />
             </label>
             <label id="golRateControl" class="control control--range" title="How often to apply the Game of Life pass">

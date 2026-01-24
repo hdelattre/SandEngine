@@ -2507,6 +2507,13 @@ uniform uint u_ambientTemp;
 uniform int u_edgeStone;
 uniform int u_addMode;
 uniform int u_walls;
+uniform int u_allowAgents;
+uniform int u_allowCircuits;
+uniform float u_hueStrength;
+uniform float u_dither;
+uniform float u_biasPlant;
+uniform float u_biasWater;
+uniform float u_biasStone;
 
 layout(location = 0) out uvec4 outState;
 layout(location = 1) out uvec4 outEnergy;
@@ -2621,17 +2628,63 @@ float colorDist(vec3 a, vec3 b) {
   return dot(d, d);
 }
 
-uint mapColor(vec3 rgb) {
+uint hashU32(uint x) {
+  x ^= x >> 16u;
+  x *= 0x7feb352du;
+  x ^= x >> 15u;
+  x *= 0x846ca68bu;
+  x ^= x >> 16u;
+  return x;
+}
+
+float rand01(ivec2 p, uint salt) {
+  uint h = uint(p.x) * 374761393u + uint(p.y) * 668265263u;
+  h ^= salt * 3266489917u;
+  h = hashU32(h);
+  return float(h & 0xffffu) / 65535.0;
+}
+
+uint hueTarget(vec3 rgb) {
+  float mx = max(max(rgb.r, rgb.g), rgb.b);
+  float mn = min(min(rgb.r, rgb.g), rgb.b);
+  float d = mx - mn;
+  float sat = d / max(mx, 1e-5);
+  float lum = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
+  if (sat < 0.18 || lum < 0.08) return 255u;
+
+  float h = 0.0;
+  if (d > 1e-5) {
+    if (mx == rgb.r) h = mod((rgb.g - rgb.b) / d, 6.0);
+    else if (mx == rgb.g) h = ((rgb.b - rgb.r) / d) + 2.0;
+    else h = ((rgb.r - rgb.g) / d) + 4.0;
+    h /= 6.0;
+    if (h < 0.0) h += 1.0;
+  }
+  float deg = h * 360.0;
+  if (deg >= 80.0 && deg <= 160.0) return P_PLANT;
+  if (deg >= 185.0 && deg <= 255.0) return P_WATER;
+  if (deg >= 35.0 && deg <= 78.0) return P_SAND;
+  return 255u;
+}
+
+uint mapColor(vec3 rgb, uint targetId) {
   float best = 1e9;
   uint bestId = P_STONE;
   for (int id = 0; id < 256; id++) {
     vec3 pc = texelFetch(u_palette, ivec2(id, 0), 0).rgb;
     // Skip placeholder magenta entries (undefined particles).
     if (pc.r > 0.99 && pc.g < 0.01 && pc.b > 0.99) continue;
-    float d = colorDist(rgb, pc);
-    if (d < best) {
-      best = d;
-      bestId = uint(id);
+    uint pid = uint(id);
+    if (u_allowAgents == 0 && (pid == P_BOT || pid == P_GLIDER)) continue;
+    if (u_allowCircuits == 0 && (pid >= P_CIRCUIT_WIRE && pid <= P_CIRCUIT_TOGGLE_E)) continue;
+    float score = colorDist(rgb, pc);
+    if (pid == P_PLANT) score -= u_biasPlant * 0.06;
+    if (pid == P_WATER) score -= u_biasWater * 0.06;
+    if (pid == P_STONE) score -= u_biasStone * 0.06;
+    if (targetId != 255u && pid == targetId) score -= u_hueStrength * 0.08;
+    if (score < best) {
+      best = score;
+      bestId = pid;
     }
   }
   return bestId;
@@ -2740,7 +2793,13 @@ void main() {
     }
   }
 
-  uint id = mapColor(px.rgb);
+  vec3 rgb = px.rgb;
+  if (u_dither > 0.0) {
+    float n = rand01(ic, 911u) - 0.5;
+    rgb = clamp(rgb + n * (u_dither * 0.12), 0.0, 1.0);
+  }
+  uint tId = (u_hueStrength > 0.0) ? hueTarget(rgb) : 255u;
+  uint id = mapColor(rgb, tId);
   if (u_addMode != 0) {
     if (id == P_EMPTY) {
       outState = cur;

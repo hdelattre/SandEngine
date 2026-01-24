@@ -61,6 +61,11 @@ export class GpuSim {
     this.ambientTemp = DEFAULT_AMBIENT_TEMP;
     this.wallsEnabled = true;
     this.openEdgesEnabled = false;
+    this.stampHueStrength = 0.25;
+    this.stampDither = 0.05;
+    this.stampBiasPlant = 0.2;
+    this.stampBiasWater = 0.1;
+    this.stampBiasStone = 0.0;
     this.tick = 0;
     this.seed = opts.seed >>> 0;
     this.viewMode = /** @type {ViewMode} */ ("material");
@@ -579,6 +584,13 @@ export class GpuSim {
         thermal1: mustGetUniform(gl, program, "u_thermal1"),
         latent: mustGetUniform(gl, program, "u_latent"),
         walls: mustGetUniform(gl, program, "u_walls"),
+        allowAgents: mustGetUniform(gl, program, "u_allowAgents"),
+        allowCircuits: mustGetUniform(gl, program, "u_allowCircuits"),
+        hueStrength: mustGetUniform(gl, program, "u_hueStrength"),
+        dither: mustGetUniform(gl, program, "u_dither"),
+        biasPlant: mustGetUniform(gl, program, "u_biasPlant"),
+        biasWater: mustGetUniform(gl, program, "u_biasWater"),
+        biasStone: mustGetUniform(gl, program, "u_biasStone"),
       },
     };
 
@@ -1180,12 +1192,14 @@ export class GpuSim {
    * @param {number} imgHeight
    * @param {number} originX
    * @param {number} originY
-   * @param {{edgeStone?: boolean, addMode?: boolean} | undefined} [opts]
+   * @param {{edgeStone?: boolean, addMode?: boolean, allowAgents?: boolean, allowCircuits?: boolean} | undefined} [opts]
    */
   stampImage(image, imgWidth, imgHeight, originX, originY, opts) {
     const gl = this.gl;
     const edgeStone = opts?.edgeStone ?? true;
     const addMode = opts?.addMode ?? false;
+    const allowAgents = opts?.allowAgents ?? false;
+    const allowCircuits = opts?.allowCircuits ?? false;
 
     this._imgSize.width = imgWidth | 0;
     this._imgSize.height = imgHeight | 0;
@@ -1206,6 +1220,13 @@ export class GpuSim {
     gl.uniform1i(u.edgeStone, edgeStone ? 1 : 0);
     gl.uniform1i(u.addMode, addMode ? 1 : 0);
     gl.uniform1i(u.walls, this.wallsEnabled ? 1 : 0);
+    gl.uniform1i(u.allowAgents, allowAgents ? 1 : 0);
+    gl.uniform1i(u.allowCircuits, allowCircuits ? 1 : 0);
+    gl.uniform1f(u.hueStrength, this.stampHueStrength);
+    gl.uniform1f(u.dither, this.stampDither);
+    gl.uniform1f(u.biasPlant, this.stampBiasPlant);
+    gl.uniform1f(u.biasWater, this.stampBiasWater);
+    gl.uniform1f(u.biasStone, this.stampBiasStone);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this._srcTex());

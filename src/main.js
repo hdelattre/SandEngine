@@ -88,6 +88,8 @@ const particlePicker = /** @type {HTMLDivElement} */ (document.getElementById("p
 const particleSearch = /** @type {HTMLInputElement} */ (document.getElementById("particleSearch"));
 const particleGrid = /** @type {HTMLDivElement} */ (document.getElementById("particleGrid"));
 const particlePickerCloseBtn = /** @type {HTMLButtonElement} */ (document.getElementById("particlePickerCloseBtn"));
+const stampMapModal = /** @type {HTMLDivElement} */ (document.getElementById("stampMapModal"));
+const stampMapCloseBtn = /** @type {HTMLButtonElement} */ (document.getElementById("stampMapCloseBtn"));
 const brushControl = /** @type {HTMLElement} */ (document.getElementById("brushControl"));
 const stampControls = /** @type {HTMLElement} */ (document.getElementById("stampControls"));
 const agentPaintControl = /** @type {HTMLElement} */ (document.getElementById("agentPaintControl"));
@@ -107,10 +109,18 @@ const viewSelect = /** @type {HTMLSelectElement} */ (document.getElementById("vi
 const resSelect = /** @type {HTMLSelectElement} */ (document.getElementById("resSelect"));
 const reliefMode = /** @type {HTMLSelectElement} */ (document.getElementById("reliefMode"));
 const pasteEdgeStone = /** @type {HTMLInputElement} */ (document.getElementById("pasteEdgeStone"));
+const stampHue = /** @type {HTMLInputElement} */ (document.getElementById("stampHue"));
+const stampBiasPlant = /** @type {HTMLInputElement} */ (document.getElementById("stampBiasPlant"));
+const stampBiasWater = /** @type {HTMLInputElement} */ (document.getElementById("stampBiasWater"));
+const stampBiasStone = /** @type {HTMLInputElement} */ (document.getElementById("stampBiasStone"));
+const stampDither = /** @type {HTMLInputElement} */ (document.getElementById("stampDither"));
 const stampMode = /** @type {HTMLInputElement} */ (document.getElementById("stampMode"));
 const stampW = /** @type {HTMLInputElement} */ (document.getElementById("stampW"));
 const stampH = /** @type {HTMLInputElement} */ (document.getElementById("stampH"));
 const stampLock = /** @type {HTMLInputElement} */ (document.getElementById("stampLock"));
+const stampAllowAgents = /** @type {HTMLInputElement} */ (document.getElementById("stampAllowAgents"));
+const stampAllowCircuits = /** @type {HTMLInputElement} */ (document.getElementById("stampAllowCircuits"));
+const stampMapBtn = /** @type {HTMLButtonElement} */ (document.getElementById("stampMapBtn"));
 const addMode = /** @type {HTMLInputElement} */ (document.getElementById("addMode"));
 const openEdges = /** @type {HTMLInputElement} */ (document.getElementById("openEdges"));
 const caRule = /** @type {HTMLInputElement} */ (document.getElementById("caRule"));
@@ -130,6 +140,11 @@ const caRuleValue = /** @type {HTMLOutputElement | null} */ (document.getElement
 const caIntervalValue = /** @type {HTMLOutputElement | null} */ (document.getElementById("caIntervalValue"));
 const golRateValue = /** @type {HTMLOutputElement | null} */ (document.getElementById("golRateValue"));
 const zoomValue = /** @type {HTMLOutputElement | null} */ (document.getElementById("zoomValue"));
+const stampHueValue = /** @type {HTMLOutputElement | null} */ (document.getElementById("stampHueValue"));
+const stampBiasPlantValue = /** @type {HTMLOutputElement | null} */ (document.getElementById("stampBiasPlantValue"));
+const stampBiasWaterValue = /** @type {HTMLOutputElement | null} */ (document.getElementById("stampBiasWaterValue"));
+const stampBiasStoneValue = /** @type {HTMLOutputElement | null} */ (document.getElementById("stampBiasStoneValue"));
+const stampDitherValue = /** @type {HTMLOutputElement | null} */ (document.getElementById("stampDitherValue"));
 const topbar = /** @type {HTMLElement | null} */ (document.querySelector("header.topbar"));
 
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
@@ -322,9 +337,10 @@ if (!sim) return;
 let didAutoStartupStamp = false;
 sim.setOpenEdgesEnabled(openEdges.checked);
 sim.setWallsEnabled(!openEdges.checked);
+syncStampMappingFromUi();
 
-/** @type {(typeof levels)[number]} */
-let activeLevel = levels.find((l) => l.id === levelSelect.value) ?? levels[0];
+  /** @type {(typeof levels)[number]} */
+  let activeLevel = levels.find((l) => l.id === levelSelect.value) ?? levels[0];
 let remainingBudget = /** @type {number | null} */ (null);
 let levelComplete = false;
 let goalStable = 0;
@@ -547,6 +563,11 @@ function setParticlePickerOpen(open) {
   }
 }
 
+function setStampMapOpen(open) {
+  stampMapModal.hidden = !open;
+  if (open) syncRangeReadouts();
+}
+
 function syncParticleGrid() {
   const q = particleSearch.value.trim().toLowerCase();
   const current = Number(particleSelect.value) | 0;
@@ -611,6 +632,16 @@ particleSearch.addEventListener("keydown", (e) => {
     e.preventDefault();
     setParticlePickerOpen(false);
   }
+});
+
+stampMapBtn.addEventListener("click", () => {
+  if (activeTool !== "stamp") return;
+  if (activeLevel.id !== LEVEL_ID.SANDBOX) return;
+  setStampMapOpen(true);
+});
+stampMapCloseBtn.addEventListener("click", () => setStampMapOpen(false));
+stampMapModal.addEventListener("pointerdown", (e) => {
+  if (e.target === stampMapModal) setStampMapOpen(false);
 });
 
 buildHotbar();
@@ -869,6 +900,7 @@ function syncToolUi() {
  */
 function setTool(tool) {
   if (tool !== "copy" && copySel.active) cancelCopySelection();
+  if (tool !== "stamp") setStampMapOpen(false);
   if (tool === "stamp") {
     if (!stamp) {
       notify("paste an image to stamp first");
@@ -1345,9 +1377,22 @@ function syncGolRateReadout() {
   golRateValue.textContent = n === 1 ? "every tick" : `every ${n} ticks`;
 }
 
+function syncStampMappingFromUi() {
+  sim.stampHueStrength = clamp(Number(stampHue.value) / 100, 0, 1);
+  sim.stampBiasPlant = clamp(Number(stampBiasPlant.value) / 100, 0, 1);
+  sim.stampBiasWater = clamp(Number(stampBiasWater.value) / 100, 0, 1);
+  sim.stampBiasStone = clamp(Number(stampBiasStone.value) / 100, 0, 1);
+  sim.stampDither = clamp(Number(stampDither.value) / 100, 0, 1);
+}
+
 function syncRangeReadouts() {
   if (brushSizeValue) brushSizeValue.textContent = brushSize.value;
   if (zoomValue) zoomValue.textContent = `${Number(camera.zoom).toFixed(1)}×`;
+  if (stampHueValue) stampHueValue.textContent = `${stampHue.value}%`;
+  if (stampBiasPlantValue) stampBiasPlantValue.textContent = `${stampBiasPlant.value}%`;
+  if (stampBiasWaterValue) stampBiasWaterValue.textContent = `${stampBiasWater.value}%`;
+  if (stampBiasStoneValue) stampBiasStoneValue.textContent = `${stampBiasStone.value}%`;
+  if (stampDitherValue) stampDitherValue.textContent = `${stampDither.value}%`;
   syncCaRuleReadout();
   syncCaIntervalReadout();
   syncGolRateReadout();
@@ -1356,6 +1401,16 @@ function syncRangeReadouts() {
 
 brushSize.addEventListener("input", syncRangeReadouts);
 simRate.addEventListener("input", syncRangeReadouts);
+stampHue.addEventListener("input", syncRangeReadouts);
+stampBiasPlant.addEventListener("input", syncRangeReadouts);
+stampBiasWater.addEventListener("input", syncRangeReadouts);
+stampBiasStone.addEventListener("input", syncRangeReadouts);
+stampDither.addEventListener("input", syncRangeReadouts);
+stampHue.addEventListener("input", syncStampMappingFromUi);
+stampBiasPlant.addEventListener("input", syncStampMappingFromUi);
+stampBiasWater.addEventListener("input", syncStampMappingFromUi);
+stampBiasStone.addEventListener("input", syncStampMappingFromUi);
+stampDither.addEventListener("input", syncStampMappingFromUi);
 caRule.addEventListener("input", syncRangeReadouts);
 caRule.addEventListener("input", () => {
   sim.caRule = clampInt(Number(caRule.value) || 0, 0, 255);
@@ -1456,9 +1511,17 @@ function setActiveLevel(levelId) {
   particleMoreBtn.disabled = !canPickParticles;
   toolStampBtn.disabled = !isSandbox;
   toolCopyBtn.disabled = !isSandbox;
+  stampMapBtn.disabled = !isSandbox;
   resSelect.disabled = !isSandbox;
   pasteEdgeStone.disabled = !isSandbox;
   openEdges.disabled = !isSandbox;
+  stampHue.disabled = !isSandbox;
+  stampBiasPlant.disabled = !isSandbox;
+  stampBiasWater.disabled = !isSandbox;
+  stampBiasStone.disabled = !isSandbox;
+  stampDither.disabled = !isSandbox;
+  stampAllowAgents.disabled = !isSandbox;
+  stampAllowCircuits.disabled = !isSandbox;
   agentPaintSelect.disabled = !isSandbox;
   agentDirSelect.disabled = !isSandbox;
   agentDrill.disabled = !isSandbox;
@@ -1490,7 +1553,7 @@ function setActiveLevel(levelId) {
   sim.seed = next.seed >>> 0;
 
   const { source, width, height, originX, originY } = next.buildStamp();
-  sim.stampImage(source, width, height, originX, originY, { edgeStone: false, addMode: false });
+  sim.stampImage(source, width, height, originX, originY, { edgeStone: false, addMode: false, allowAgents: true, allowCircuits: true });
 }
 
 setActiveLevel(levelSelect.value);
@@ -1600,8 +1663,14 @@ async function stampWorldFromBlob(blob) {
   const offscreen = rasterizeToOffscreen(source, srcW, srcH, w, h);
   if (cleanup) cleanup();
 
+  const stampOpts = {
+    edgeStone: pasteEdgeStone.checked,
+    addMode: false,
+    allowAgents: stampAllowAgents.checked,
+    allowCircuits: stampAllowCircuits.checked,
+  };
   // @ts-ignore - OffscreenCanvas is a valid CanvasImageSource at runtime.
-  sim.stampImage(offscreen, w, h, 1, 1, { edgeStone: pasteEdgeStone.checked, addMode: false });
+  sim.stampImage(offscreen, w, h, 1, 1, stampOpts);
   startStartupStepRamp();
 }
 
@@ -1723,15 +1792,21 @@ function placeStampAt(x, y) {
   ox = clamp(ox, 1, sim.width - 1 - clampedW);
   oy = clamp(oy, 1, sim.height - clampedH);
 
+  const stampOpts = {
+    edgeStone: pasteEdgeStone.checked,
+    addMode: addMode.checked,
+    allowAgents: stampAllowAgents.checked,
+    allowCircuits: stampAllowCircuits.checked,
+  };
   if (clampedW === stamp.srcW && clampedH === stamp.srcH) {
     // @ts-ignore - OffscreenCanvas is a valid CanvasImageSource at runtime.
-    sim.stampImage(stamp.base, clampedW, clampedH, ox, oy, { edgeStone: pasteEdgeStone.checked, addMode: addMode.checked });
+    sim.stampImage(stamp.base, clampedW, clampedH, ox, oy, stampOpts);
     return;
   }
 
   const out = rasterizeToOffscreen(stamp.base, stamp.srcW, stamp.srcH, clampedW, clampedH);
   // @ts-ignore - OffscreenCanvas is a valid CanvasImageSource at runtime.
-  sim.stampImage(out, clampedW, clampedH, ox, oy, { edgeStone: pasteEdgeStone.checked, addMode: addMode.checked });
+  sim.stampImage(out, clampedW, clampedH, ox, oy, stampOpts);
 }
 
 /**
@@ -1888,6 +1963,13 @@ window.addEventListener("keydown", (e) => {
   if (!particlePicker.hidden && e.key === "Escape") {
     e.preventDefault();
     setParticlePickerOpen(false);
+    return;
+  }
+
+  if (!stampMapModal.hidden && e.key === "Escape") {
+    e.preventDefault();
+    setStampMapOpen(false);
+    stampMapBtn.focus();
     return;
   }
 
