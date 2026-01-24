@@ -28,16 +28,21 @@ uniform usampler2D u_latent;
 uniform ivec2 u_size;
 uniform ivec2 u_dir;
 uniform int u_parity;
-uniform int u_walls;
 
 layout(location = 0) out uvec4 outState;
 layout(location = 1) out uvec4 outEnergy;
+
+#ifndef WALLS
+#define WALLS 1
+#endif
 
 const uint FLAG_IMMOVABLE = 1u << 0u;
 
 bool inBounds(ivec2 c) {
   if (c.x < 0 || c.y < 0 || c.x >= u_size.x || c.y >= u_size.y) return false;
-  if (u_walls != 0 && (c.y == 0 || c.x == 0 || c.x == (u_size.x - 1))) return false;
+#if WALLS
+  if (c.y == 0 || c.x == 0 || c.x == (u_size.x - 1)) return false;
+#endif
   return true;
 }
 
@@ -369,11 +374,17 @@ uniform int u_selfStep;
 uniform int u_doMove;
 uniform uint u_ambientTemp;
 uniform uint u_passSalt;
-uniform int u_walls;
-uniform int u_openEdges;
 
 layout(location = 0) out uvec4 outState;
 layout(location = 1) out uvec4 outEnergy;
+
+#ifndef WALLS
+#define WALLS 1
+#endif
+
+#ifndef OPEN_EDGES
+#define OPEN_EDGES 0
+#endif
 
 const uint P_EMPTY = 0u;
 const uint P_SAND = 1u;
@@ -426,7 +437,9 @@ const uint T_LAVA_RESOFTEN = 170u;
 
 bool inBounds(ivec2 c) {
   if (c.x < 0 || c.y < 0 || c.x >= u_size.x || c.y >= u_size.y) return false;
-  if (u_walls != 0 && (c.y == 0 || c.x == 0 || c.x == (u_size.x - 1))) return false;
+#if WALLS
+  if (c.y == 0 || c.x == 0 || c.x == (u_size.x - 1)) return false;
+#endif
   return true;
 }
 
@@ -1404,7 +1417,8 @@ void selfUpdate(ivec2 c, inout uvec4 s, inout uint e, uint salt) {
     }
   }
 
-  if (u_openEdges != 0 && id != P_EMPTY) {
+#if OPEN_EDGES
+  if (id != P_EMPTY) {
     if (c.x == 0 || c.y == 0 || c.x == (u_size.x - 1) || c.y == (u_size.y - 1)) {
       id = P_EMPTY;
       data = 0u;
@@ -1412,6 +1426,7 @@ void selfUpdate(ivec2 c, inout uvec4 s, inout uint e, uint salt) {
       e = energyForTemp(P_EMPTY, u_ambientTemp);
     }
   }
+#endif
 
   s.r = id;
   s.b = data;
@@ -2831,7 +2846,6 @@ uniform usampler2D u_state;
 uniform usampler2D u_energy;
 uniform sampler2D u_palette;
 uniform ivec2 u_size;
-uniform int u_viewMode; // 0 material, 1 temperature, 2 wind
 uniform uint u_ambientTemp;
 uniform vec2 u_camCenter;
 uniform float u_camZoom;
@@ -2840,6 +2854,11 @@ out vec4 outColor;
 
 #ifndef RELIEF_MODE
 #define RELIEF_MODE 0
+#endif
+
+#ifndef VIEW_MODE
+// 0 material, 1 temperature, 2 wind
+#define VIEW_MODE 0
 #endif
 
 const uint P_EMPTY = 0u;
@@ -3025,19 +3044,22 @@ void main() {
   if (!minified) {
     ivec2 c = ivec2(floor(p));
     c = clamp(c, ivec2(0), u_size - ivec2(1));
+#if VIEW_MODE == 1
+    uint temp = texelFetch(u_state, c, 0).g;
+    outColor = vec4(temperatureColor(float(temp) / 255.0), 1.0);
+    return;
+#elif VIEW_MODE == 2
+    outColor = vec4(windColor(windAt(c)), 1.0);
+    return;
+#else
     uvec4 s = texelFetch(u_state, c, 0);
     uint id = s.r;
     uint temp = s.g;
-    if (u_viewMode == 1) {
-      outColor = vec4(temperatureColor(float(temp) / 255.0), 1.0);
-    } else if (u_viewMode == 2) {
-      outColor = vec4(windColor(windAt(c)), 1.0);
-    } else {
-      vec3 base = shadeMaterial(id, temp, s.b);
-      base = applyRelief(base, c);
-      outColor = vec4(base, 1.0);
-    }
+    vec3 base = shadeMaterial(id, temp, s.b);
+    base = applyRelief(base, c);
+    outColor = vec4(base, 1.0);
     return;
+#endif
   }
 
   ivec2 c0 = ivec2(floor(p));
@@ -3046,23 +3068,26 @@ void main() {
   ivec2 s01 = clamp(c0 + ivec2(0, 1), ivec2(0), u_size - ivec2(1));
   ivec2 s11 = clamp(c0 + ivec2(1, 1), ivec2(0), u_size - ivec2(1));
 
+#if VIEW_MODE == 2
+  vec2 w = (windAt(s00) + windAt(s10) + windAt(s01) + windAt(s11)) * 0.25;
+  outColor = vec4(windColor(w), 1.0);
+  return;
+#endif
+
+#if VIEW_MODE != 2
   uvec4 a = texelFetch(u_state, s00, 0);
   uvec4 b = texelFetch(u_state, s10, 0);
   uvec4 c = texelFetch(u_state, s01, 0);
   uvec4 d = texelFetch(u_state, s11, 0);
+#endif
 
-  if (u_viewMode == 1) {
-    float t = (float(a.g) + float(b.g) + float(c.g) + float(d.g)) * 0.25 / 255.0;
-    outColor = vec4(temperatureColor(t), 1.0);
-    return;
-  }
+#if VIEW_MODE == 1
+  float t = (float(a.g) + float(b.g) + float(c.g) + float(d.g)) * 0.25 / 255.0;
+  outColor = vec4(temperatureColor(t), 1.0);
+  return;
+#endif
 
-  if (u_viewMode == 2) {
-    vec2 w = (windAt(s00) + windAt(s10) + windAt(s01) + windAt(s11)) * 0.25;
-    outColor = vec4(windColor(w), 1.0);
-    return;
-  }
-
+#if VIEW_MODE == 0
   vec3 sum = vec3(0.0);
   float wsum = 0.0;
 
@@ -3106,5 +3131,6 @@ void main() {
     outColor = vec4(sum / wsum, 1.0);
 #endif
   }
+#endif
 }
 `;

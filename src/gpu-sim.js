@@ -107,18 +107,37 @@ export class GpuSim {
     this._activeProgram = null;
 
     // Programs.
-    this._heat = this._createHeatProgram();
+    this._heat = {
+      /** @type {null | {program: WebGLProgram, u: Record<string, WebGLUniformLocation>}} */
+      wallsOn: null,
+      /** @type {null | {program: WebGLProgram, u: Record<string, WebGLUniformLocation>}} */
+      wallsOff: null,
+    };
     this._clear = this._createClearProgram();
-    this._matter = this._createMatterProgram();
+    this._matter = {
+      /** @type {null | {program: WebGLProgram, u: Record<string, WebGLUniformLocation>}} */
+      wallsOn_openEdgesOn: null,
+      /** @type {null | {program: WebGLProgram, u: Record<string, WebGLUniformLocation>}} */
+      wallsOn_openEdgesOff: null,
+      /** @type {null | {program: WebGLProgram, u: Record<string, WebGLUniformLocation>}} */
+      wallsOff_openEdgesOn: null,
+      /** @type {null | {program: WebGLProgram, u: Record<string, WebGLUniformLocation>}} */
+      wallsOff_openEdgesOff: null,
+    };
     this._paint = this._createPaintProgram();
     this._stamp = this._createStampProgram();
     this._walls = this._createWallsProgram();
     this._render = {
-      off: this._createRenderProgram(0),
-      /** @type {null | {program: WebGLProgram, u: Record<string, WebGLUniformLocation>}} */
-      edges: null,
-      /** @type {null | {program: WebGLProgram, u: Record<string, WebGLUniformLocation>}} */
-      dunes: null,
+      /** @type {null | {program: WebGLProgram, u: Record<string, WebGLUniformLocation | null>}} */
+      material_off: null,
+      /** @type {null | {program: WebGLProgram, u: Record<string, WebGLUniformLocation | null>}} */
+      material_edges: null,
+      /** @type {null | {program: WebGLProgram, u: Record<string, WebGLUniformLocation | null>}} */
+      material_dunes: null,
+      /** @type {null | {program: WebGLProgram, u: Record<string, WebGLUniformLocation | null>}} */
+      temperature: null,
+      /** @type {null | {program: WebGLProgram, u: Record<string, WebGLUniformLocation | null>}} */
+      wind: null,
     };
 
     // Constant textures.
@@ -153,11 +172,13 @@ export class GpuSim {
   }
 
   /**
+   * @param {0|1} walls
    * @returns {{program: WebGLProgram, u: Record<string, WebGLUniformLocation>}}
    */
-  _createHeatProgram() {
+  _createHeatProgram(walls) {
     const gl = this.gl;
-    const program = createProgram(gl, FULLSCREEN_VERT, HEAT_FRAG);
+    const frag = walls ? HEAT_FRAG : withGlslDefines(HEAT_FRAG, { WALLS: 0 });
+    const program = createProgram(gl, FULLSCREEN_VERT, frag);
     const out = {
       program,
       u: {
@@ -169,7 +190,6 @@ export class GpuSim {
         size: mustGetUniform(gl, program, "u_size"),
         dir: mustGetUniform(gl, program, "u_dir"),
         parity: mustGetUniform(gl, program, "u_parity"),
-        walls: mustGetUniform(gl, program, "u_walls"),
       },
     };
 
@@ -210,11 +230,18 @@ export class GpuSim {
   }
 
   /**
+   * @param {0|1} walls
+   * @param {0|1} openEdges
    * @returns {{program: WebGLProgram, u: Record<string, WebGLUniformLocation>}}
    */
-  _createMatterProgram() {
+  _createMatterProgram(walls, openEdges) {
     const gl = this.gl;
-    const program = createProgram(gl, FULLSCREEN_VERT, MATTER_FRAG);
+    const defs = {
+      WALLS: walls,
+      OPEN_EDGES: openEdges,
+    };
+    const frag = walls && !openEdges ? MATTER_FRAG : withGlslDefines(MATTER_FRAG, defs);
+    const program = createProgram(gl, FULLSCREEN_VERT, frag);
     const out = {
       program,
       u: {
@@ -233,8 +260,6 @@ export class GpuSim {
         doMove: mustGetUniform(gl, program, "u_doMove"),
         ambientTemp: mustGetUniform(gl, program, "u_ambientTemp"),
         passSalt: mustGetUniform(gl, program, "u_passSalt"),
-        walls: mustGetUniform(gl, program, "u_walls"),
-        openEdges: mustGetUniform(gl, program, "u_openEdges"),
       },
     };
 
@@ -643,30 +668,75 @@ export class GpuSim {
    * @param {0|1|2} reliefMode
    * @returns {{program: WebGLProgram, u: Record<string, WebGLUniformLocation>}}
    */
-  _createRenderProgram(reliefMode) {
+  /**
+   * @param {0|1|2} viewMode 0 material, 1 temperature, 2 wind
+   * @param {0|1|2} reliefMode
+   * @returns {{program: WebGLProgram, u: Record<string, WebGLUniformLocation | null>}}
+   */
+  _createRenderProgram(viewMode, reliefMode) {
     const gl = this.gl;
-    const frag = reliefMode === 0 ? RENDER_FRAG : withGlslDefines(RENDER_FRAG, { RELIEF_MODE: reliefMode });
+    const defs = { VIEW_MODE: viewMode, RELIEF_MODE: reliefMode };
+    const frag = viewMode === 0 && reliefMode === 0 ? RENDER_FRAG : withGlslDefines(RENDER_FRAG, defs);
     const program = createProgram(gl, FULLSCREEN_VERT, frag);
+    const getUniform = (name) => gl.getUniformLocation(program, name);
     const out = {
       program,
       u: {
-        state: mustGetUniform(gl, program, "u_state"),
-        energy: mustGetUniform(gl, program, "u_energy"),
-        palette: mustGetUniform(gl, program, "u_palette"),
-        size: mustGetUniform(gl, program, "u_size"),
-        viewMode: mustGetUniform(gl, program, "u_viewMode"),
-        ambientTemp: mustGetUniform(gl, program, "u_ambientTemp"),
-        camCenter: mustGetUniform(gl, program, "u_camCenter"),
-        camZoom: mustGetUniform(gl, program, "u_camZoom"),
+        state: getUniform("u_state"),
+        energy: getUniform("u_energy"),
+        palette: getUniform("u_palette"),
+        size: getUniform("u_size"),
+        ambientTemp: getUniform("u_ambientTemp"),
+        camCenter: getUniform("u_camCenter"),
+        camZoom: getUniform("u_camZoom"),
       },
     };
 
     this._useProgram(program);
-    gl.uniform1i(out.u.state, 0);
-    gl.uniform1i(out.u.palette, 1);
-    gl.uniform1i(out.u.energy, 2);
+    if (out.u.state) gl.uniform1i(out.u.state, 0);
+    if (out.u.palette) gl.uniform1i(out.u.palette, 1);
+    if (out.u.energy) gl.uniform1i(out.u.energy, 2);
 
     return out;
+  }
+
+  /**
+   * @returns {{program: WebGLProgram, u: Record<string, WebGLUniformLocation>}}
+   */
+  _heatProgram() {
+    if (this.wallsEnabled) {
+      return this._heat.wallsOn ?? (this._heat.wallsOn = this._createHeatProgram(1));
+    }
+    return this._heat.wallsOff ?? (this._heat.wallsOff = this._createHeatProgram(0));
+  }
+
+  /**
+   * @returns {{program: WebGLProgram, u: Record<string, WebGLUniformLocation>}}
+   */
+  _matterProgram() {
+    const walls = this.wallsEnabled ? 1 : 0;
+    const openEdges = this.openEdgesEnabled ? 1 : 0;
+    if (walls) {
+      if (openEdges) return this._matter.wallsOn_openEdgesOn ?? (this._matter.wallsOn_openEdgesOn = this._createMatterProgram(1, 1));
+      return this._matter.wallsOn_openEdgesOff ?? (this._matter.wallsOn_openEdgesOff = this._createMatterProgram(1, 0));
+    }
+    if (openEdges) return this._matter.wallsOff_openEdgesOn ?? (this._matter.wallsOff_openEdgesOn = this._createMatterProgram(0, 1));
+    return this._matter.wallsOff_openEdgesOff ?? (this._matter.wallsOff_openEdgesOff = this._createMatterProgram(0, 0));
+  }
+
+  /**
+   * @returns {{program: WebGLProgram, u: Record<string, WebGLUniformLocation | null>}}
+   */
+  _renderProgram() {
+    const viewMode = this.viewMode === "temperature" ? 1 : this.viewMode === "wind" ? 2 : 0;
+    const reliefMode = viewMode === 0 ? (this.reliefMode === "dunes" ? 2 : this.reliefMode === "edges" ? 1 : 0) : 0;
+
+    if (viewMode === 1) return this._render.temperature ?? (this._render.temperature = this._createRenderProgram(1, 0));
+    if (viewMode === 2) return this._render.wind ?? (this._render.wind = this._createRenderProgram(2, 0));
+
+    if (reliefMode === 2) return this._render.material_dunes ?? (this._render.material_dunes = this._createRenderProgram(0, 2));
+    if (reliefMode === 1) return this._render.material_edges ?? (this._render.material_edges = this._createRenderProgram(0, 1));
+    return this._render.material_off ?? (this._render.material_off = this._createRenderProgram(0, 0));
   }
 
   /**
@@ -818,8 +888,8 @@ export class GpuSim {
    */
   setReliefMode(mode) {
     this.reliefMode = mode;
-    if (this.reliefMode === "edges" && !this._render.edges) this._render.edges = this._createRenderProgram(1);
-    if (this.reliefMode === "dunes" && !this._render.dunes) this._render.dunes = this._createRenderProgram(2);
+    if (this.reliefMode === "edges" && !this._render.material_edges) this._render.material_edges = this._createRenderProgram(0, 1);
+    if (this.reliefMode === "dunes" && !this._render.material_dunes) this._render.material_dunes = this._createRenderProgram(0, 2);
   }
 
   /**
@@ -872,10 +942,9 @@ export class GpuSim {
 
   _beginHeatStep() {
     const gl = this.gl;
-    const { program, u } = this._heat;
+    const { program, u } = this._heatProgram();
     this._useProgram(program);
     gl.uniform2i(u.size, this.width, this.height);
-    gl.uniform1i(u.walls, this.wallsEnabled ? 1 : 0);
 
     gl.activeTexture(gl.TEXTURE2);
     gl.bindTexture(gl.TEXTURE_2D, this._propTex);
@@ -887,14 +956,12 @@ export class GpuSim {
 
   _beginMatterStep() {
     const gl = this.gl;
-    const { program, u } = this._matter;
+    const { program, u } = this._matterProgram();
     this._useProgram(program);
     gl.uniform2i(u.size, this.width, this.height);
     gl.uniform1ui(u.tick, this.tick >>> 0);
     gl.uniform1ui(u.seed, this.seed >>> 0);
     gl.uniform1ui(u.ambientTemp, this.ambientTemp >>> 0);
-    gl.uniform1i(u.walls, this.wallsEnabled ? 1 : 0);
-    gl.uniform1i(u.openEdges, this.openEdgesEnabled ? 1 : 0);
 
     gl.activeTexture(gl.TEXTURE2);
     gl.bindTexture(gl.TEXTURE_2D, this._propTex);
@@ -913,7 +980,7 @@ export class GpuSim {
    */
   _heatPass(dx, dy, parity) {
     const gl = this.gl;
-    const { program, u } = this._heat;
+    const { program, u } = this._heatProgram();
 
     this._useProgram(program);
     gl.uniform2i(u.dir, dx, dy);
@@ -939,7 +1006,7 @@ export class GpuSim {
    */
   _matterPass(dx, dy, parity, selfStep, doMove, passSalt) {
     const gl = this.gl;
-    const { program, u } = this._matter;
+    const { program, u } = this._matterProgram();
 
     this._useProgram(program);
     gl.uniform2i(u.dir, dx, dy);
@@ -1308,19 +1375,13 @@ export class GpuSim {
 
   render() {
     const gl = this.gl;
-    const r = (() => {
-      if (this.viewMode !== "material") return this._render.off;
-      if (this.reliefMode === "dunes") return this._render.dunes ?? (this._render.dunes = this._createRenderProgram(2));
-      if (this.reliefMode === "edges") return this._render.edges ?? (this._render.edges = this._createRenderProgram(1));
-      return this._render.off;
-    })();
+    const r = this._renderProgram();
     const { program, u } = r;
     this._useProgram(program);
-    gl.uniform2i(u.size, this.width, this.height);
-    gl.uniform1i(u.viewMode, this.viewMode === "temperature" ? 1 : this.viewMode === "wind" ? 2 : 0);
-    gl.uniform1ui(u.ambientTemp, this.ambientTemp >>> 0);
-    gl.uniform2f(u.camCenter, this.camCenterX, this.camCenterY);
-    gl.uniform1f(u.camZoom, this.camZoom);
+    if (u.size) gl.uniform2i(u.size, this.width, this.height);
+    if (u.ambientTemp) gl.uniform1ui(u.ambientTemp, this.ambientTemp >>> 0);
+    if (u.camCenter) gl.uniform2f(u.camCenter, this.camCenterX, this.camCenterY);
+    if (u.camZoom) gl.uniform1f(u.camZoom, this.camZoom);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this._srcTex());
