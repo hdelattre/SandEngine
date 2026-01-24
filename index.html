@@ -15,17 +15,17 @@
         </div>
         <div class="topbar__actions">
           <div class="topbar__row topbar__row--primary" aria-label="Simulation and menu">
-            <div class="segmented" role="group" aria-label="Tool">
-              <button id="toolPaintBtn" type="button" aria-pressed="true">Paint</button>
-              <button id="toolStampBtn" type="button" aria-pressed="false">Stamp</button>
-              <button id="toolCopyBtn" type="button" aria-pressed="false">Copy</button>
-            </div>
+            <button id="settingsBtn" type="button" aria-controls="settingsPanel" aria-expanded="false">Menu</button>
             <div class="segmented" role="group" aria-label="Simulation">
               <button id="playPauseBtn" type="button">Pause</button>
               <button id="stepBtn" type="button">Step</button>
               <button id="clearBtn" type="button">Clear</button>
             </div>
-            <button id="settingsBtn" type="button" aria-controls="settingsPanel" aria-expanded="false">Menu</button>
+            <div class="segmented" role="group" aria-label="Tool">
+              <button id="toolPaintBtn" type="button" aria-pressed="true">Paint</button>
+              <button id="toolStampBtn" type="button" aria-pressed="false">Stamp</button>
+              <button id="toolCopyBtn" type="button" aria-pressed="false">Copy</button>
+            </div>
           </div>
           <div class="topbar__row topbar__row--secondary" aria-label="Tools">
             <div class="hotbar" role="group" aria-label="Particles">
