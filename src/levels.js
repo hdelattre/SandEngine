@@ -9,6 +9,7 @@ export const LEVEL_ID = /** @type {const} */ ({
   SANDBOX: "sandbox",
   STEAM_ELEVATOR: "steam-elevator",
   CIRCUIT_LAB: "circuit-lab",
+  CIRCUIT_COUNTER: "circuit-counter",
 });
 
 /**
@@ -74,6 +75,7 @@ export function createLevels(particleDefs) {
       buildStamp: () => ({ source: makeOffscreenCanvas(1, 1), width: 1, height: 1, originX: 0, originY: 0 }),
     },
     createCircuitLabLevel(particleDefs),
+    createCircuitCounterLevel(particleDefs),
     createSteamElevatorLevel(particleDefs),
   ];
 
@@ -89,10 +91,7 @@ function createCircuitLabLevel(particleDefs) {
   const wire = rgbCss(particleDefs[Particle.CIRCUIT_WIRE].color);
   const power = rgbCss(particleDefs[Particle.CIRCUIT_POWER].color);
   const lamp = rgbCss(particleDefs[Particle.CIRCUIT_LAMP].color);
-  const notN = rgbCss(particleDefs[Particle.CIRCUIT_NOT_N].color);
   const notE = rgbCss(particleDefs[Particle.CIRCUIT_NOT_E].color);
-  const notS = rgbCss(particleDefs[Particle.CIRCUIT_NOT_S].color);
-  const notW = rgbCss(particleDefs[Particle.CIRCUIT_NOT_W].color);
   const air = "rgb(255, 255, 255)";
 
   /** @type {SimSize} */
@@ -107,10 +106,7 @@ function createCircuitLabLevel(particleDefs) {
       Particle.CIRCUIT_WIRE,
       Particle.CIRCUIT_POWER,
       Particle.CIRCUIT_LAMP,
-      Particle.CIRCUIT_NOT_N,
       Particle.CIRCUIT_NOT_E,
-      Particle.CIRCUIT_NOT_S,
-      Particle.CIRCUIT_NOT_W,
       Particle.STONE,
     ],
     budget: null,
@@ -118,8 +114,10 @@ function createCircuitLabLevel(particleDefs) {
     goal: null,
     hints: [
       "Circuit parts: R wire, P power, L lamp, N inverter (E).",
-      "Place/remove Power Sources in the empty input sockets to toggle A/B.",
-      "Stations: top-left OR, top-right NOT, bottom-right AND (DeMorgan), bottom-left range/attenuation.",
+      "Toggle inputs by erasing/painting Power Sources in the sockets.",
+      "Note: circuit power attenuates by 1 per wire cell (range ~15).",
+      "Top row (L→R): Wire, NOT, OR, NOR.",
+      "Bottom row (L→R): Range, Split, NAND, AND.",
     ],
     buildStamp: () => {
       const w = size.width;
@@ -191,77 +189,310 @@ function createCircuitLabLevel(particleDefs) {
       }
 
       // --- Station boxes ---
-      // Bottom-left: attenuation/range.
-      box(10, 10, 120, 70);
-      // Top-left: OR.
-      box(10, 80, 120, 130);
-      // Top-right: NOT.
-      box(136, 80, 246, 130);
-      // Bottom-right: AND.
-      box(136, 10, 246, 70);
+      // 2x4 grid (8 small demo stations).
+      const colX0 = [8, 70, 132, 194];
+      const colX1 = [65, 127, 189, 251];
+      const rowY0 = [72, 8]; // [top, bottom]
+      const rowY1 = [129, 65];
 
-      // --- Bottom-left: attenuation/range demo ---
-      // Socket at (20, 25) (leave empty) -> wire at (21..60,25)
-      vline(stone, 19, 24, 26);
-      hline(wire, 21, 60, 25);
-      // Lamps show the cutoff around distance 15 (wire glow shows gradient).
-      dot(lamp, 30, 26);
-      dot(lamp, 35, 26);
-      dot(lamp, 36, 26);
-      dot(lamp, 60, 26);
+      for (let row = 0; row < 2; row++) {
+        for (let col = 0; col < 4; col++) {
+          box(colX0[col], rowY0[row], colX1[col], rowY1[row]);
+        }
+      }
 
-      // --- Top-left: OR gate ---
-      // A socket at (20,120), B socket at (20,95).
-      vline(stone, 19, 119, 121);
-      vline(stone, 19, 94, 96);
-      // A path: (21..60,120), down to (60,108)
-      hline(wire, 21, 60, 120);
-      vline(wire, 60, 108, 120);
-      // B path: (21..60,95), up to (60,108)
-      hline(wire, 21, 60, 95);
-      vline(wire, 60, 95, 108);
-      // Output to lamp
-      hline(wire, 61, 94, 108);
-      dot(lamp, 95, 108);
+      /**
+       * Draw a 1-cell input socket marker (stone bracket + empty socket).
+       * The caller must draw wire starting at xSocket+1.
+       * @param {number} xSocket
+       * @param {number} ySocket
+       */
+      function socket(xSocket, ySocket) {
+        vline(stone, xSocket - 1, ySocket - 1, ySocket + 1);
+      }
 
-      // --- Top-right: NOT gate ---
-      // Socket at (146,105) -> wire to inverter -> wire -> lamp
-      vline(stone, 145, 104, 106);
-      hline(wire, 147, 159, 105);
-      dot(notE, 160, 105);
-      hline(wire, 161, 180, 105);
-      dot(lamp, 181, 105);
+      // --- Top row (L→R): Wire, NOT, OR, NOR ---
+      // Wire: socket -> short wire -> lamp.
+      {
+        const x0 = colX0[0];
+        const y0 = rowY0[0];
+        const xSocket = x0 + 4;
+        const y = y0 + 28;
+        socket(xSocket, y);
+        dot(power, xSocket, y);
+        hline(wire, xSocket + 1, xSocket + 12, y);
+        dot(lamp, xSocket + 13, y);
+      }
 
-      // --- Bottom-right: AND gate (NOT(OR(NOT A, NOT B))) ---
-      // A socket at (146,60) -> wire -> NOT_E
-      vline(stone, 145, 59, 61);
-      hline(wire, 147, 159, 60);
-      dot(notE, 160, 60);
-      // B socket at (146,25) -> wire -> NOT_E
-      vline(stone, 145, 24, 26);
-      hline(wire, 147, 159, 25);
-      dot(notE, 160, 25);
+      // NOT: socket -> wire -> inverter -> lamp (lamp reads inverter output directly).
+      {
+        const x0 = colX0[1];
+        const y0 = rowY0[0];
+        const xSocket = x0 + 4;
+        const y = y0 + 28;
+        socket(xSocket, y);
+        dot(power, xSocket, y);
+        hline(wire, xSocket + 1, xSocket + 7, y);
+        dot(notE, xSocket + 8, y);
+        dot(lamp, xSocket + 9, y);
+      }
 
-      // Route inverted outputs to OR junction at (190,42)
-      hline(wire, 161, 190, 60);
-      vline(wire, 190, 42, 60);
-      hline(wire, 161, 190, 25);
-      vline(wire, 190, 25, 42);
+      // OR: two sockets -> wired junction -> lamp.
+      {
+        const x0 = colX0[2];
+        const y0 = rowY0[0];
+        const xSocket = x0 + 4;
+        const yMid = y0 + 28;
+        const yA = yMid + 6;
+        const yB = yMid - 6;
+        const xJoin = x0 + 12;
+        socket(xSocket, yA);
+        socket(xSocket, yB);
+        dot(power, xSocket, yA);
+        hline(wire, xSocket + 1, xJoin, yA);
+        hline(wire, xSocket + 1, xJoin, yB);
+        vline(wire, xJoin, yB, yA);
+        dot(lamp, xJoin + 1, yMid);
+      }
 
-      // Final NOT_E takes OR output and produces AND
-      hline(wire, 191, 199, 42);
-      dot(notE, 200, 42);
-      hline(wire, 201, 220, 42);
-      dot(lamp, 221, 42);
+      // NOR: OR into inverter -> lamp.
+      {
+        const x0 = colX0[3];
+        const y0 = rowY0[0];
+        const xSocket = x0 + 4;
+        const yMid = y0 + 28;
+        const yA = yMid + 6;
+        const yB = yMid - 6;
+        const xIn = x0 + 12;
+        socket(xSocket, yA);
+        socket(xSocket, yB);
+        hline(wire, xSocket + 1, xIn, yA);
+        hline(wire, xSocket + 1, xIn, yB);
+        vline(wire, xIn, yB, yA);
+        dot(notE, xIn + 1, yMid);
+        dot(lamp, xIn + 2, yMid);
+      }
 
-      // --- A few "spares" for quick edits (pre-placed parts) ---
-      // (One of each, tucked near bottom-left box)
-      dot(power, 18, 60);
-      dot(lamp, 22, 60);
-      dot(notN, 26, 60);
-      dot(notE, 28, 60);
-      dot(notS, 30, 60);
-      dot(notW, 32, 60);
+      // --- Bottom row (L→R): Range, Split, NAND, AND ---
+      // Range: long wire shows cutoff (lamp near edge on, lamp past edge off).
+      {
+        const x0 = colX0[0];
+        const y0 = rowY0[1];
+        const xSocket = x0 + 4;
+        const y = y0 + 28;
+        const xWire0 = xSocket + 1;
+        const xWire1 = x0 + 32;
+        socket(xSocket, y);
+        dot(power, xSocket, y);
+        hline(wire, xWire0, xWire1, y);
+        dot(lamp, xWire0 + 11, y + 1); // on
+        dot(lamp, xWire0 + 14, y + 1); // on (edge)
+        dot(lamp, xWire0 + 15, y + 1); // off (past range)
+        dot(lamp, xWire1, y + 1); // off
+      }
+
+      // Split: one input powers multiple lamps (fan-out).
+      {
+        const x0 = colX0[1];
+        const y0 = rowY0[1];
+        const xSocket = x0 + 4;
+        const y = y0 + 28;
+        const xJ = xSocket + 8;
+        socket(xSocket, y);
+        dot(power, xSocket, y);
+        hline(wire, xSocket + 1, xJ, y);
+        dot(lamp, xJ + 1, y);
+        dot(lamp, xJ, y + 1);
+        dot(lamp, xJ, y - 1);
+      }
+
+      // NAND: invert inputs then OR them (NAND = !A || !B).
+      {
+        const x0 = colX0[2];
+        const y0 = rowY0[1];
+        const xSocket = x0 + 4;
+        const yMid = y0 + 28;
+        const yA = yMid + 10;
+        const yB = yMid - 10;
+        const xInv = x0 + 10;
+        const xJoin = xInv + 1;
+        socket(xSocket, yA);
+        socket(xSocket, yB);
+        dot(power, xSocket, yA);
+        hline(wire, xSocket + 1, xInv - 1, yA);
+        hline(wire, xSocket + 1, xInv - 1, yB);
+        dot(notE, xInv, yA);
+        dot(notE, xInv, yB);
+        vline(wire, xJoin, yB, yA);
+        dot(wire, xJoin + 1, yMid);
+        dot(lamp, xJoin + 2, yMid);
+      }
+
+      // AND: NAND into inverter (AND = !( !A || !B )).
+      {
+        const x0 = colX0[3];
+        const y0 = rowY0[1];
+        const xSocket = x0 + 4;
+        const yMid = y0 + 28;
+        const yA = yMid + 10;
+        const yB = yMid - 10;
+        const xInv = x0 + 10;
+        const xJoin = xInv + 1;
+        const xFinal = x0 + 14;
+        socket(xSocket, yA);
+        socket(xSocket, yB);
+        dot(power, xSocket, yA);
+        dot(power, xSocket, yB);
+        hline(wire, xSocket + 1, xInv - 1, yA);
+        hline(wire, xSocket + 1, xInv - 1, yB);
+        dot(notE, xInv, yA);
+        dot(notE, xInv, yB);
+        vline(wire, xJoin, yB, yA);
+        hline(wire, xJoin, xFinal - 1, yMid);
+        dot(notE, xFinal, yMid);
+        dot(lamp, xFinal + 1, yMid);
+      }
+
+      return { source: canvas, width: w, height: h, originX: 0, originY: 0 };
+    },
+  };
+}
+
+/**
+ * @param {ParticleDef[]} particleDefs
+ * @returns {LevelDef}
+ */
+function createCircuitCounterLevel(particleDefs) {
+  const stone = rgbCss(particleDefs[Particle.STONE].color);
+  const wire = rgbCss(particleDefs[Particle.CIRCUIT_WIRE].color);
+  const lamp = rgbCss(particleDefs[Particle.CIRCUIT_LAMP].color);
+  const clock = rgbCss(particleDefs[Particle.CIRCUIT_CLOCK_E].color);
+  const toggle = rgbCss(particleDefs[Particle.CIRCUIT_TOGGLE_E].color);
+  const air = "rgb(255, 255, 255)";
+
+  /** @type {SimSize} */
+  const size = { width: 256, height: 144 };
+
+  return {
+    id: LEVEL_ID.CIRCUIT_COUNTER,
+    name: "Circuit Counter",
+    size,
+    seed: 12345,
+    allowedPaintIds: [
+      Particle.CIRCUIT_WIRE,
+      Particle.CIRCUIT_POWER,
+      Particle.CIRCUIT_LAMP,
+      Particle.CIRCUIT_NOT_E,
+      Particle.CIRCUIT_CLOCK_E,
+      Particle.CIRCUIT_TOGGLE_E,
+      Particle.STONE,
+    ],
+    budget: null,
+    paintCost: () => 0,
+    goal: null,
+    hints: [
+      "An 8-bit ripple counter driven by a free-running clock.",
+      "Watch the bits (lamps) toggle; use Play/Pause to inspect propagation.",
+      "Tip: bump sim speed for faster high bits.",
+      "Hotkeys: R wire, L lamp, K clock, Y toggle.",
+    ],
+    buildStamp: () => {
+      const w = size.width;
+      const h = size.height;
+      const canvas = makeOffscreenCanvas(w, h);
+      // @ts-ignore - OffscreenCanvas/HTMLCanvasElement share getContext at runtime.
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("2D canvas unavailable");
+
+      ctx.imageSmoothingEnabled = false;
+      ctx.fillStyle = air;
+      ctx.fillRect(0, 0, w, h);
+
+      /**
+       * @param {string} color
+       * @param {number} x0
+       * @param {number} y0
+       * @param {number} x1
+       * @param {number} y1
+       */
+      function fill(color, x0, y0, x1, y1) {
+        ctx.fillStyle = color;
+        const rw = x1 - x0 + 1;
+        const rh = y1 - y0 + 1;
+        const cy = h - 1 - y1;
+        ctx.fillRect(x0, cy, rw, rh);
+      }
+
+      /**
+       * @param {string} color
+       * @param {number} x
+       * @param {number} y
+       */
+      function dot(color, x, y) {
+        fill(color, x, y, x, y);
+      }
+
+      /**
+       * @param {string} color
+       * @param {number} x0
+       * @param {number} x1
+       * @param {number} y
+       */
+      function hline(color, x0, x1, y) {
+        fill(color, x0, y, x1, y);
+      }
+
+      /**
+       * @param {string} color
+       * @param {number} x
+       * @param {number} y0
+       * @param {number} y1
+       */
+      function vline(color, x, y0, y1) {
+        fill(color, x, y0, x, y1);
+      }
+
+      /**
+       * @param {number} x0
+       * @param {number} y0
+       * @param {number} x1
+       * @param {number} y1
+       */
+      function box(x0, y0, x1, y1) {
+        hline(stone, x0, x1, y0);
+        hline(stone, x0, x1, y1);
+        vline(stone, x0, y0, y1);
+        vline(stone, x1, y0, y1);
+      }
+
+      // Main panel.
+      box(10, 12, 245, 120);
+
+      // Counter chain: clock -> (wire,toggle)*8
+      const y = 52;
+      const x0 = 22;
+      const bits = 8;
+
+      // Clock drives the first wire cell.
+      dot(clock, x0, y);
+      dot(wire, x0 + 1, y);
+
+      for (let i = 0; i < bits; i++) {
+        const xt = x0 + 2 + i * 2;
+        dot(toggle, xt, y);
+        dot(wire, xt + 1, y);
+        // Bit indicator lamp above the wire (so it doesn't break the chain).
+        dot(lamp, xt + 1, y + 1);
+        // Small tick mark for readability.
+        dot(stone, xt + 1, y - 1);
+      }
+
+      // Clock indicator lamp.
+      dot(lamp, x0 + 1, y + 1);
+
+      // Visual separator between low/high nibble (placed off the chain).
+      dot(stone, x0 + 10, y + 1);
+      dot(stone, x0 + 10, y - 1);
 
       return { source: canvas, width: w, height: h, originX: 0, originY: 0 };
     },

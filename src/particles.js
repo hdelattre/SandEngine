@@ -32,6 +32,8 @@ export const Particle = /** @type {const} */ ({
   CIRCUIT_NOT_E: 25,
   CIRCUIT_NOT_S: 26,
   CIRCUIT_NOT_W: 27,
+  CIRCUIT_CLOCK_E: 28,
+  CIRCUIT_TOGGLE_E: 29,
 });
 
 export const ParticleFlag = /** @type {const} */ ({
@@ -301,6 +303,22 @@ export function createParticleDefs() {
     mobility: 0,
     flags: ParticleFlag.IMMOVABLE,
   });
+  defs[Particle.CIRCUIT_CLOCK_E] = makeDef(Particle.CIRCUIT_CLOCK_E, {
+    name: "Clock (E)",
+    color: [92, 140, 255],
+    density: 255,
+    conductivity: 220,
+    mobility: 0,
+    flags: ParticleFlag.IMMOVABLE,
+  });
+  defs[Particle.CIRCUIT_TOGGLE_E] = makeDef(Particle.CIRCUIT_TOGGLE_E, {
+    name: "Toggle (E)",
+    color: [120, 196, 92],
+    density: 255,
+    conductivity: 220,
+    mobility: 0,
+    flags: ParticleFlag.IMMOVABLE,
+  });
 
   return defs;
 }
@@ -402,6 +420,12 @@ export function defaultCellForParticle(id) {
     case Particle.CIRCUIT_NOT_W:
       // Defaults "on" (unpowered input).
       return { temp: DEFAULT_AMBIENT_TEMP, data: 15, flags: 0 };
+    case Particle.CIRCUIT_CLOCK_E:
+      // `data` is the output (0 or 15). `flags` (state.a) is a countdown to next toggle.
+      return { temp: DEFAULT_AMBIENT_TEMP, data: 15, flags: 1 };
+    case Particle.CIRCUIT_TOGGLE_E:
+      // `data` is the output (0 or 15). `flags` (state.a) stores internal state bits.
+      return { temp: DEFAULT_AMBIENT_TEMP, data: 0, flags: 0 };
     case Particle.MUD:
       return { temp: DEFAULT_AMBIENT_TEMP, data: 200, flags: 0 };
     case Particle.WATER:

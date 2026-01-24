@@ -414,6 +414,8 @@ const uint P_WIRE = 16u;
 	const uint P_CIRCUIT_NOT_E = 25u;
 	const uint P_CIRCUIT_NOT_S = 26u;
 	const uint P_CIRCUIT_NOT_W = 27u;
+	const uint P_CIRCUIT_CLOCK_E = 28u;
+	const uint P_CIRCUIT_TOGGLE_E = 29u;
 
 	const uint FLAG_IMMOVABLE = 1u << 0u;
 const uint FLAG_POWDER = 1u << 1u;
@@ -769,6 +771,8 @@ void agentPaintCell(uint paintId, out uint id, out uint temp, out uint data, out
   else if (id == P_GLIDER) { meta = 148u; }
   else if (id == P_CIRCUIT_POWER) { data = 15u; }
   else if (id == P_CIRCUIT_NOT_N || id == P_CIRCUIT_NOT_E || id == P_CIRCUIT_NOT_S || id == P_CIRCUIT_NOT_W) { data = 15u; }
+  else if (id == P_CIRCUIT_CLOCK_E) { data = 15u; meta = 1u; }
+  else if (id == P_CIRCUIT_TOGGLE_E) { data = 0u; meta = 0u; }
 
   e = energyForTemp(id, temp);
 }
@@ -973,6 +977,11 @@ bool circuitIsInverter(uint id) {
   return (id == P_CIRCUIT_NOT_N) || (id == P_CIRCUIT_NOT_E) || (id == P_CIRCUIT_NOT_S) || (id == P_CIRCUIT_NOT_W);
 }
 
+bool circuitIsDirectionalSource(uint id) {
+  if (circuitIsInverter(id)) return true;
+  return (id == P_CIRCUIT_CLOCK_E) || (id == P_CIRCUIT_TOGGLE_E);
+}
+
 ivec2 circuitInverterOutDelta(uint id) {
   if (id == P_CIRCUIT_NOT_N) return ivec2(0, 1);
   if (id == P_CIRCUIT_NOT_E) return ivec2(1, 0);
@@ -980,8 +989,16 @@ ivec2 circuitInverterOutDelta(uint id) {
   return ivec2(-1, 0);
 }
 
-bool circuitInverterOutputsToward(uint inverterId, ivec2 deltaFromInverterToTarget) {
-  return deltaFromInverterToTarget == circuitInverterOutDelta(inverterId);
+ivec2 circuitOutDelta(uint id) {
+  if (circuitIsInverter(id)) return circuitInverterOutDelta(id);
+  // Fixed-orientation circuit sources.
+  if (id == P_CIRCUIT_CLOCK_E) return ivec2(1, 0);
+  if (id == P_CIRCUIT_TOGGLE_E) return ivec2(1, 0);
+  return ivec2(0, 0);
+}
+
+bool circuitOutputsToward(uint id, ivec2 deltaFromSourceToTarget) {
+  return deltaFromSourceToTarget == circuitOutDelta(id);
 }
 
 uint circuitPowerFromNeighborToWire(ivec2 deltaToNeighbor, uvec4 n) {
@@ -989,7 +1006,7 @@ uint circuitPowerFromNeighborToWire(ivec2 deltaToNeighbor, uvec4 n) {
   uint ndata = circuitClamp15(n.b);
   if (nid == P_CIRCUIT_POWER) return 15u;
   if (nid == P_CIRCUIT_WIRE) return (ndata > 0u) ? (ndata - 1u) : 0u;
-  if (circuitIsInverter(nid) && circuitInverterOutputsToward(nid, -deltaToNeighbor)) return ndata;
+  if (circuitIsDirectionalSource(nid) && circuitOutputsToward(nid, -deltaToNeighbor)) return ndata;
   return 0u;
 }
 
@@ -998,7 +1015,7 @@ uint circuitPowerFromNeighborToInput(ivec2 deltaToNeighbor, uvec4 n) {
   uint ndata = circuitClamp15(n.b);
   if (nid == P_CIRCUIT_POWER) return 15u;
   if (nid == P_CIRCUIT_WIRE) return ndata;
-  if (circuitIsInverter(nid) && circuitInverterOutputsToward(nid, -deltaToNeighbor)) return ndata;
+  if (circuitIsDirectionalSource(nid) && circuitOutputsToward(nid, -deltaToNeighbor)) return ndata;
   return 0u;
 }
 
@@ -1405,6 +1422,25 @@ void selfUpdate(ivec2 c, inout uvec4 s, inout uint e, uint salt) {
     if (inBounds(n)) inP = circuitPowerFromNeighborToInput(inD, loadState(n));
     data = (inP > 0u) ? 0u : 15u;
     meta = 0u;
+  } else if (id == P_CIRCUIT_CLOCK_E) {
+    // A simple free-running clock: toggles output every meta ticks.
+    if (meta > 0u) {
+      meta -= 1u;
+    } else {
+      meta = 1u;
+      data = (data > 0u) ? 0u : 15u;
+    }
+  } else if (id == P_CIRCUIT_TOGGLE_E) {
+    // Rising-edge toggle, input from west, output to east.
+    ivec2 n = c + ivec2(-1, 0);
+    uint inP = 0u;
+    if (inBounds(n)) inP = circuitPowerFromNeighborToInput(ivec2(-1, 0), loadState(n));
+    bool inOn = inP > 0u;
+    bool prevOn = ((meta >> 1u) & 1u) != 0u;
+    uint state = meta & 1u;
+    if (inOn && !prevOn) state ^= 1u;
+    meta = (state & 1u) | (uint(inOn) << 1u);
+    data = state != 0u ? 15u : 0u;
   }
 
   // Open top boundary: gases/energy vent out of the world.
@@ -2561,6 +2597,8 @@ const uint P_CIRCUIT_NOT_N = 24u;
 const uint P_CIRCUIT_NOT_E = 25u;
 const uint P_CIRCUIT_NOT_S = 26u;
 const uint P_CIRCUIT_NOT_W = 27u;
+const uint P_CIRCUIT_CLOCK_E = 28u;
+const uint P_CIRCUIT_TOGGLE_E = 29u;
 
 uvec4 loadState(ivec2 c) {
   return texelFetch(u_state, c, 0);
@@ -2635,6 +2673,7 @@ uvec4 makeCell(uint id) {
   else if (id == P_GLIDER) { data = 0u; meta = 148u; }
   else if (id == P_CIRCUIT_POWER) { data = 15u; }
   else if (id == P_CIRCUIT_NOT_N || id == P_CIRCUIT_NOT_E || id == P_CIRCUIT_NOT_S || id == P_CIRCUIT_NOT_W) { data = 15u; }
+  else if (id == P_CIRCUIT_CLOCK_E) { data = 15u; meta = 1u; }
   return uvec4(id, temp, data, meta);
 }
 
@@ -2869,6 +2908,8 @@ const uint P_CIRCUIT_NOT_N = 24u;
 const uint P_CIRCUIT_NOT_E = 25u;
 const uint P_CIRCUIT_NOT_S = 26u;
 const uint P_CIRCUIT_NOT_W = 27u;
+const uint P_CIRCUIT_CLOCK_E = 28u;
+const uint P_CIRCUIT_TOGGLE_E = 29u;
 const float TAU = 6.28318530718;
 
 vec3 hsv2rgb(vec3 c) {
@@ -2923,7 +2964,9 @@ vec3 shadeMaterial(uint id, uint temp, uint data) {
     id == P_CIRCUIT_NOT_N ||
     id == P_CIRCUIT_NOT_E ||
     id == P_CIRCUIT_NOT_S ||
-    id == P_CIRCUIT_NOT_W
+    id == P_CIRCUIT_NOT_W ||
+    id == P_CIRCUIT_CLOCK_E ||
+    id == P_CIRCUIT_TOGGLE_E
   ) {
     float p = clamp(float(data & 15u) / 15.0, 0.0, 1.0);
     if (id == P_CIRCUIT_WIRE) {

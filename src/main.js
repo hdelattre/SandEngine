@@ -1503,6 +1503,8 @@ function setActiveLevel(levelId) {
   const isSandbox = next.id === LEVEL_ID.SANDBOX;
   const canPickParticles = true;
 
+  if (!isSandbox && activeTool !== "paint") setTool("paint");
+
   levelSelect.value = next.id;
   particleSelect.disabled = !canPickParticles;
   for (const el of particleHotbar.querySelectorAll("button")) {
@@ -2051,6 +2053,8 @@ window.addEventListener("keydown", (e) => {
     p: Particle.CIRCUIT_POWER,
     l: Particle.CIRCUIT_LAMP,
     n: Particle.CIRCUIT_NOT_E,
+    k: Particle.CIRCUIT_CLOCK_E,
+    y: Particle.CIRCUIT_TOGGLE_E,
   };
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
   if (k in hotkeys) {
