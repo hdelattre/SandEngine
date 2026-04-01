@@ -918,6 +918,105 @@ export class GpuSim {
   }
 
   /**
+   * @param {number[] | Int32Array} centersXY
+   * @param {number} n
+   * @param {number} radius
+   * @returns {{x: number, y: number, w: number, h: number} | null}
+   */
+  _paintBounds(centersXY, n, radius) {
+    if (n <= 0 || this.width <= 0 || this.height <= 0) return null;
+
+    let minX = this.width;
+    let minY = this.height;
+    let maxX = -1;
+    let maxY = -1;
+    for (let i = 0; i < n; i++) {
+      const x = centersXY[i * 2 + 0] | 0;
+      const y = centersXY[i * 2 + 1] | 0;
+      if (x - radius < minX) minX = x - radius;
+      if (y - radius < minY) minY = y - radius;
+      if (x + radius > maxX) maxX = x + radius;
+      if (y + radius > maxY) maxY = y + radius;
+    }
+
+    minX = Math.max(0, minX | 0);
+    minY = Math.max(0, minY | 0);
+    maxX = Math.min((this.width - 1) | 0, maxX | 0);
+    maxY = Math.min((this.height - 1) | 0, maxY | 0);
+    if (maxX < minX || maxY < minY) return null;
+    return {
+      x: minX,
+      y: minY,
+      w: (maxX - minX + 1) | 0,
+      h: (maxY - minY + 1) | 0,
+    };
+  }
+
+  /**
+   * @param {number} attachment
+   * @param {number} x
+   * @param {number} y
+   * @param {number} w
+   * @param {number} h
+   * @returns {Uint8Array}
+   */
+  _readAttachmentRegion(attachment, x, y, w, h) {
+    const gl = this.gl;
+    const ww = w | 0;
+    const hh = h | 0;
+    if (ww <= 0 || hh <= 0) return new Uint8Array(0);
+    const out = new Uint8Array(ww * hh * 4);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this._worldFb[this._front]);
+    gl.readBuffer(attachment);
+    gl.readPixels(x | 0, y | 0, ww, hh, gl.RGBA_INTEGER, gl.UNSIGNED_BYTE, out);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return out;
+  }
+
+  /**
+   * @param {number} x
+   * @param {number} y
+   * @param {number} w
+   * @param {number} h
+   * @param {Uint8Array} state
+   * @param {Uint8Array} energy
+   */
+  _restoreRegion(x, y, w, h, state, energy) {
+    const gl = this.gl;
+    const front = this._front;
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this._stateTex[front]);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, x | 0, y | 0, w | 0, h | 0, gl.RGBA_INTEGER, gl.UNSIGNED_BYTE, state);
+
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this._energyTex[front]);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, x | 0, y | 0, w | 0, h | 0, gl.RGBA_INTEGER, gl.UNSIGNED_BYTE, energy);
+  }
+
+  /**
+   * @param {Uint8Array} before
+   * @param {Uint8Array} after
+   * @returns {number}
+   */
+  _countStateChanges(before, after) {
+    const len = Math.min(before.length, after.length);
+    let changed = 0;
+    for (let i = 0; i < len; i += 4) {
+      if (
+        before[i + 0] !== after[i + 0] ||
+        before[i + 1] !== after[i + 1] ||
+        before[i + 2] !== after[i + 2] ||
+        before[i + 3] !== after[i + 3]
+      ) {
+        changed++;
+      }
+    }
+    return changed;
+  }
+
+  /**
    * @param {WebGLProgram} program
    * @param {WebGLFramebuffer | null} fb
    * @param {number} w
@@ -1197,10 +1296,11 @@ export class GpuSim {
    * @param {number} y
    * @param {{id: number, temp: number, data: number, flags: number}} cell
    * @param {number} radius
-   * @param {{addMode?: boolean} | undefined} [opts]
+   * @param {{addMode?: boolean, maxChanges?: number} | undefined} [opts]
+   * @returns {{applied: boolean, changedCells: number}}
    */
   paintCircle(x, y, cell, radius, opts) {
-    this.paintCircles([x, y], cell, radius, opts);
+    return this.paintCircles([x, y], cell, radius, opts);
   }
 
   /**
@@ -1208,15 +1308,32 @@ export class GpuSim {
    * @param {number[] | Int32Array} centersXY Flat [x0,y0,x1,y1,...]
    * @param {{id: number, temp: number, data: number, flags: number}} cell
    * @param {number} radius
-   * @param {{addMode?: boolean} | undefined} [opts]
+   * @param {{addMode?: boolean, maxChanges?: number} | undefined} [opts]
+   * @returns {{applied: boolean, changedCells: number}}
    */
   paintCircles(centersXY, cell, radius, opts) {
     const gl = this.gl;
     const { program, u } = this._paint;
     const addMode = opts?.addMode ?? false;
+    const maxChanges = Number.isFinite(opts?.maxChanges) ? Math.max(0, opts.maxChanges | 0) : null;
     const maxPts = 24;
     const n = Math.min(maxPts, ((centersXY.length / 2) | 0));
-    if (n <= 0) return;
+    if (n <= 0) return { applied: true, changedCells: 0 };
+
+    /** @type {{x: number, y: number, w: number, h: number} | null} */
+    let bounds = null;
+    /** @type {Uint8Array | null} */
+    let prevState = null;
+    /** @type {Uint8Array | null} */
+    let prevEnergy = null;
+
+    if (maxChanges !== null) {
+      bounds = this._paintBounds(centersXY, n, radius | 0);
+      if (bounds) {
+        prevState = this.readRegion(bounds.x, bounds.y, bounds.w, bounds.h);
+        prevEnergy = this._readAttachmentRegion(this.gl.COLOR_ATTACHMENT1, bounds.x, bounds.y, bounds.w, bounds.h);
+      }
+    }
 
     for (let i = 0; i < n * 2; i++) this._paintCenters[i] = centersXY[i] | 0;
 
@@ -1248,6 +1365,19 @@ export class GpuSim {
 
     this._draw(this._dstFb(), this.width, this.height);
     this._swap();
+
+    if (maxChanges === null || !bounds || !prevState || !prevEnergy) {
+      return { applied: true, changedCells: 0 };
+    }
+
+    const nextState = this.readRegion(bounds.x, bounds.y, bounds.w, bounds.h);
+    const changedCells = this._countStateChanges(prevState, nextState);
+    if (changedCells > maxChanges) {
+      this._restoreRegion(bounds.x, bounds.y, bounds.w, bounds.h, prevState, prevEnergy);
+      return { applied: false, changedCells };
+    }
+
+    return { applied: true, changedCells };
   }
 
   /**
@@ -1345,16 +1475,10 @@ export class GpuSim {
    * @returns {Uint8Array}
    */
   readRegion(x, y, w, h) {
-    const gl = this.gl;
     const ww = w | 0;
     const hh = h | 0;
     if (ww <= 0 || hh <= 0) return new Uint8Array(0);
-    const out = new Uint8Array(ww * hh * 4);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this._worldFb[this._front]);
-    gl.readBuffer(gl.COLOR_ATTACHMENT0);
-    gl.readPixels(x | 0, y | 0, ww, hh, gl.RGBA_INTEGER, gl.UNSIGNED_BYTE, out);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    return out;
+    return this._readAttachmentRegion(this.gl.COLOR_ATTACHMENT0, x, y, ww, hh);
   }
 
   /**

@@ -752,14 +752,6 @@ function paintAt(x, y, mode, agentDir) {
   if (inLevel && mode !== "erase") {
     const allowed = activeLevel.allowedPaintIds ?? [];
     if (!allowed.includes(id)) id = allowed[0] ?? Particle.STONE;
-    if (remainingBudget !== null) {
-      const cost = activeLevel.paintCost(radius);
-      if (remainingBudget < cost) {
-        notify("out of budget");
-        return false;
-      }
-      remainingBudget -= cost;
-    }
   }
 
   const base = defaultCellForParticle(/** @type {any} */ (id));
@@ -783,7 +775,18 @@ function paintAt(x, y, mode, agentDir) {
     flags = (flags & ~3) | (dir & 3);
   }
 
-  enqueuePaintCircle(x, y, { id, temp: base.temp, data, flags }, radius, { addMode: doAdd });
+  const cell = { id, temp: base.temp, data, flags };
+  if (remainingBudget !== null && !isErase) {
+    const result = sim.paintCircle(x, y, cell, radius, { addMode: doAdd, maxChanges: remainingBudget });
+    if (!result.applied) {
+      notify("out of budget");
+      return false;
+    }
+    remainingBudget -= result.changedCells;
+    return true;
+  }
+
+  enqueuePaintCircle(x, y, cell, radius, { addMode: doAdd });
   return true;
 }
 
