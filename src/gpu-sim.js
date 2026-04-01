@@ -1227,12 +1227,16 @@ export class GpuSim {
    * Runs one simulation tick (multiple disjoint-pair passes).
    */
   step() {
-    // Heat diffusion: unbiased 4-pass (horizontal + vertical, both parities).
+    // Heat diffusion: run one axis per tick (alternating by tick parity).
+    // This halves the fullscreen heat-pass count while staying unbiased over time.
     this._beginHeatStep();
-    this._heatPass(1, 0, 0);
-    this._heatPass(1, 0, 1);
-    this._heatPass(0, 1, 0);
-    this._heatPass(0, 1, 1);
+    if ((this.tick & 1) === 0) {
+      this._heatPass(1, 0, 0);
+      this._heatPass(1, 0, 1);
+    } else {
+      this._heatPass(0, 1, 0);
+      this._heatPass(0, 1, 1);
+    }
 
     // Matter passes: gravity (down), then diagonals (order alternates), then horizontal diffusion.
     this._beginMatterStep();
@@ -1253,10 +1257,10 @@ export class GpuSim {
     this._matterPass(diagSecondX, -1, 0, 0, 1, 22);
     this._matterPass(diagSecondX, -1, 1, 0, 1, 23);
 
+    // One horizontal sweep (both parities) is usually enough to keep liquids/gases
+    // moving laterally without spending four fullscreen passes per tick.
     this._matterPass(1, 0, 0, 0, 1, 30);
     this._matterPass(1, 0, 1, 0, 1, 31);
-    this._matterPass(1, 0, 0, 0, 1, 32);
-    this._matterPass(1, 0, 1, 0, 1, 33);
 
     if (this.golEnabled && this._gol) {
       const interval = Math.max(1, this.golInterval | 0);
