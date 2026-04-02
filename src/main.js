@@ -1258,6 +1258,7 @@ viewSelect.addEventListener("change", () => {
 sim.setReliefMode(/** @type {'off'|'edges'|'dunes'} */ (reliefMode.value));
 reliefMode.addEventListener("change", () => {
   sim.setReliefMode(/** @type {'off'|'edges'|'dunes'} */ (reliefMode.value));
+  resetAutoTuneProbe();
 });
 
 sim.caRule = clampInt(Number(caRule.value) || 0, 0, 255);
@@ -1281,6 +1282,7 @@ caMode.addEventListener("change", async () => {
   } finally {
     caMode.checked = sim.caEnabled;
     caMode.disabled = false;
+    resetAutoTuneProbe();
   }
 });
 
@@ -1310,6 +1312,7 @@ golMode.addEventListener("change", async () => {
     golRateControl.hidden = false;
     golRate.disabled = false;
     golMode.disabled = false;
+    resetAutoTuneProbe();
   }
 });
 
@@ -1319,6 +1322,7 @@ resSelect.addEventListener("change", () => {
   sim.setWorldSize(width, height);
   if (stamp) setStampSize(stamp.w, stamp.h);
   clampCamera();
+  resetAutoTuneProbe();
 });
 
 levelSelect.addEventListener("change", () => {
@@ -1366,6 +1370,20 @@ let simTargetSpsForUi = 0;
 let simSlow = false;
 let lastUserRateChangeNow = performance.now();
 let lastAutoTuneNow = 0;
+let lastUserRequestedSps = clamp(Number(simRate.value) || 0, MIN_STEPS_PER_SECOND, MAX_STEPS_PER_SECOND);
+let autoTuneProbeMaxSps = lastUserRequestedSps;
+
+function readRequestedSpsFromUi() {
+  const m = /** @type {'sps'|'spf'} */ (rateMode.value);
+  if (m === "sps") return clamp(Number(simRate.value) || 0, MIN_STEPS_PER_SECOND, MAX_STEPS_PER_SECOND);
+  const spf = clampInt(Number(simRate.value) || 0, 0, MAX_STEPS_PER_FRAME);
+  return clampInt(Math.round(spf * nominalFps()), MIN_STEPS_PER_SECOND, MAX_STEPS_PER_SECOND);
+}
+
+function resetAutoTuneProbe() {
+  autoTuneProbeMaxSps = clamp(lastUserRequestedSps, MIN_STEPS_PER_SECOND, MAX_STEPS_PER_SECOND);
+  lastAutoTuneNow = 0;
+}
 
 function syncCaRuleReadout() {
   if (!caRuleValue) return;
@@ -1433,6 +1451,8 @@ golRate.addEventListener("input", () => {
 });
 simRate.addEventListener("input", () => {
   lastUserRateChangeNow = performance.now();
+  lastUserRequestedSps = readRequestedSpsFromUi();
+  resetAutoTuneProbe();
 });
 syncRangeReadouts();
 
@@ -1541,6 +1561,7 @@ function setActiveLevel(levelId) {
   levelHintEl.textContent = isSandbox ? "" : next.hints.join(" ");
   syncParticleSelectOptions();
   buildHotbar();
+  resetAutoTuneProbe();
 
   if (isSandbox) {
     const { width, height } = parseRes(resSelect.value);
@@ -2247,32 +2268,51 @@ function loop(now) {
   if (mode === "sps") {
     simTargetSpsForUi = targetSpsForFrame;
     const target = targetSpsForFrame;
+    const current = clamp(Number(simRate.value) || 0, MIN_STEPS_PER_SECOND, MAX_STEPS_PER_SECOND);
+    const rememberedTarget = clamp(lastUserRequestedSps, MIN_STEPS_PER_SECOND, MAX_STEPS_PER_SECOND);
     const eff = simEffectiveSpsEma;
+    const tol = Math.max(2, Math.round(Math.max(current, target) * 0.06));
+    const trackingTarget = target <= 0 || Math.abs(eff - target) <= tol;
     const gpuBound = running && !startupStepRamp && target > 0 && (overflowed || (steps === MAX_STEPS_PER_FRAME && eff + 5 < target));
     const fpsUiBad = running && !startupStepRamp && uiFps < 12 && steps > 0;
     simSlow = (gpuBound && eff < target * 0.92) || fpsUiBad;
 
     const userRecentlyChanged = now - lastUserRateChangeNow < 2000;
     const canAutoTune = running && !startupStepRamp && !userRecentlyChanged;
-    const autoTuneIntervalMs = fpsUiBad ? 250 : 650;
-    if (canAutoTune && (gpuBound || fpsUiBad) && now - lastAutoTuneNow > autoTuneIntervalMs) {
-      // Reduce requested SPS toward what the machine can sustain (only decreases).
-      const current = clamp(Number(simRate.value) || 0, MIN_STEPS_PER_SECOND, MAX_STEPS_PER_SECOND);
-      const quantum = clampInt(Math.round(current * 0.05), 1, 50);
-      const suggestedByThroughput = eff * 0.92;
-      const suggestedByUi = fpsUiBad ? uiFps * 2 : target;
-      const desiredFloat = Math.max(1, Math.min(suggestedByThroughput, suggestedByUi));
-      const desired = clamp(Math.floor(desiredFloat / quantum) * quantum, 1, MAX_STEPS_PER_SECOND);
+    const autoTuneMinSps = current > 0 || rememberedTarget > 0 ? 1 : 0;
+    const recoveryTarget = clamp(Math.min(rememberedTarget, Math.max(current, autoTuneProbeMaxSps)), autoTuneMinSps, MAX_STEPS_PER_SECOND);
+    const canRecover =
+      target > 0 && current < recoveryTarget && trackingTarget && !simSlow && !gpuBound && !fpsUiBad && uiFps >= 24;
+    const autoTuneIntervalMs = fpsUiBad ? 250 : gpuBound ? 650 : 900;
+    if (canAutoTune && now - lastAutoTuneNow > autoTuneIntervalMs) {
+      if (gpuBound || fpsUiBad) {
+        // Keep the user's requested SPS as the long-term goal, but converge
+        // the active SPS directly toward observed throughput instead of only
+        // ratcheting down from the current slider value.
+        autoTuneProbeMaxSps = Math.min(autoTuneProbeMaxSps, current);
+        const floorByCurrent = fpsUiBad ? current * 0.15 : current * 0.25;
+        const suggestedByThroughput = Math.max(eff * 0.96, floorByCurrent);
+        const suggestedByUi = fpsUiBad ? uiFps * 2 : MAX_STEPS_PER_SECOND;
+        const desiredFloat = Math.min(suggestedByThroughput, suggestedByUi);
+        const desired = clampInt(Math.floor(desiredFloat), autoTuneMinSps, MAX_STEPS_PER_SECOND);
+        const next = clampInt(Math.min(current - 1, desired), autoTuneMinSps, MAX_STEPS_PER_SECOND);
 
-      // Apply a capped proportional reduction to avoid big SPS jumps.
-      const maxDropRaw = fpsUiBad ? Math.max(quantum, Math.round(current * 0.45)) : Math.max(quantum, Math.round(current * 0.15));
-      const maxDrop = Math.max(quantum, Math.round(maxDropRaw / quantum) * quantum);
-      const next = clamp(Math.max(desired, current - maxDrop), 1, MAX_STEPS_PER_SECOND);
-
-      if (next < current) {
-        simRate.value = String(next);
-        syncRangeReadouts();
-        lastAutoTuneNow = now;
+        if (next < current) {
+          simRate.value = String(next);
+          syncRangeReadouts();
+          lastAutoTuneNow = now;
+        }
+      } else if (canRecover) {
+        // Probe back upward toward the user's last requested SPS. The search
+        // ceiling narrows when probes fail, which keeps recovery from bouncing
+        // around a too-high target forever.
+        const gap = recoveryTarget - current;
+        const next = clampInt(Math.min(recoveryTarget, current + Math.max(1, Math.ceil(gap * 0.3))), autoTuneMinSps, MAX_STEPS_PER_SECOND);
+        if (next > current) {
+          simRate.value = String(next);
+          syncRangeReadouts();
+          lastAutoTuneNow = now;
+        }
       }
     }
   } else {
