@@ -1224,6 +1224,9 @@ let startupStepRamp = null;
 const MAX_STEPS_PER_FRAME = 8;
 const MIN_STEPS_PER_SECOND = 0;
 const MAX_STEPS_PER_SECOND = 1000;
+const AUTO_TUNE_UI_FPS_TARGET = 30;
+const AUTO_TUNE_UI_FPS_LOW_WATER = 28;
+const AUTO_TUNE_UI_FPS_HIGH_WATER = 33;
 
 function cancelStartupStepRamp() {
   startupStepRamp = null;
@@ -2274,7 +2277,7 @@ function loop(now) {
     const tol = Math.max(2, Math.round(Math.max(current, target) * 0.06));
     const trackingTarget = target <= 0 || Math.abs(eff - target) <= tol;
     const gpuBound = running && !startupStepRamp && target > 0 && (overflowed || (steps === MAX_STEPS_PER_FRAME && eff + 5 < target));
-    const fpsUiBad = running && !startupStepRamp && uiFps < 12 && steps > 0;
+    const fpsUiBad = running && !startupStepRamp && uiFps < AUTO_TUNE_UI_FPS_LOW_WATER && steps > 0;
     simSlow = (gpuBound && eff < target * 0.92) || fpsUiBad;
 
     const userRecentlyChanged = now - lastUserRateChangeNow < 2000;
@@ -2282,7 +2285,13 @@ function loop(now) {
     const autoTuneMinSps = current > 0 || rememberedTarget > 0 ? 1 : 0;
     const recoveryTarget = clamp(Math.min(rememberedTarget, Math.max(current, autoTuneProbeMaxSps)), autoTuneMinSps, MAX_STEPS_PER_SECOND);
     const canRecover =
-      target > 0 && current < recoveryTarget && trackingTarget && !simSlow && !gpuBound && !fpsUiBad && uiFps >= 24;
+      target > 0 &&
+      current < recoveryTarget &&
+      trackingTarget &&
+      !simSlow &&
+      !gpuBound &&
+      !fpsUiBad &&
+      uiFps >= AUTO_TUNE_UI_FPS_HIGH_WATER;
     const autoTuneIntervalMs = fpsUiBad ? 250 : gpuBound ? 650 : 900;
     if (canAutoTune && now - lastAutoTuneNow > autoTuneIntervalMs) {
       if (gpuBound || fpsUiBad) {
@@ -2292,7 +2301,7 @@ function loop(now) {
         autoTuneProbeMaxSps = Math.min(autoTuneProbeMaxSps, current);
         const floorByCurrent = fpsUiBad ? current * 0.15 : current * 0.25;
         const suggestedByThroughput = Math.max(eff * 0.96, floorByCurrent);
-        const suggestedByUi = fpsUiBad ? uiFps * 2 : MAX_STEPS_PER_SECOND;
+        const suggestedByUi = fpsUiBad ? current * Math.min(1, uiFps / AUTO_TUNE_UI_FPS_TARGET) : MAX_STEPS_PER_SECOND;
         const desiredFloat = Math.min(suggestedByThroughput, suggestedByUi);
         const desired = clampInt(Math.floor(desiredFloat), autoTuneMinSps, MAX_STEPS_PER_SECOND);
         const next = clampInt(Math.min(current - 1, desired), autoTuneMinSps, MAX_STEPS_PER_SECOND);
